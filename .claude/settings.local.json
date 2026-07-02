@@ -3,7 +3,9 @@
     "allow": [
       "Read(//c//**)",
       "Read(//c/Users/user/**)",
-      "Read(//c/Users/user/Desktop/**)"
+      "Read(//c/Users/user/Desktop/**)",
+      "Bash(git remote *)",
+      "Bash(conda env *)"
     ]
   }
 }
