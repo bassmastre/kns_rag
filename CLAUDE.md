@@ -46,3 +46,4 @@ NUREG-1431 Vol.1(STS)/Vol.2(Bases)를 대상으로 4가지 청킹 전략을
   source_ref: {doc_id, char_start, char_end}, parent_id)를 따를 것.
 - 실험 코드는 4개 전략에 대해 동일 파이프라인이 반복 실행되는 구조로 —
   전략별로 별도 스크립트를 만들지 말 것.
+- git add/commit/push를 절대 실행하지 말 것. 버전 관리는 사용자가 직접 수행한다.

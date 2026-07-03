@@ -1,11 +1,16 @@
 {
   "permissions": {
+    "defaultMode": "acceptEdits",
     "allow": [
       "Read(//c//**)",
       "Read(//c/Users/user/**)",
       "Read(//c/Users/user/Desktop/**)",
-      "Bash(git remote *)",
       "Bash(conda env *)"
+    ],
+    "deny": [
+      "Bash(git add:*)", 
+      "Bash(git commit:*)", 
+      "Bash(git push:*)"
     ]
   }
 }

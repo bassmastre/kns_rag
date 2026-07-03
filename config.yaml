@@ -1,0 +1,13 @@
+pdf_path: data/raw/vol1/NUREG-1431-Vol.1-Rev.5-LCO.pdf
+source_doc: "NUREG-1431 Vol.1"
+out_dir: data/processed
+
+layout:
+  defaults:
+    col1_max: 220
+    col2_max: 410
+    header_margin: 95
+  overrides: {}
+
+sections:
+  - {lco: "3.4.15", start: 243, end: 247}

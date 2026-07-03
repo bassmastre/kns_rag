@@ -1,5 +1,6 @@
-# data (원본 PDF, 처리된 텍스트, QA 데이터셋 — 용량 크고 재생성 가능)
+# data/output (원본 PDF, 처리된 텍스트, QA 데이터셋, 실험 결과 — 용량 크고 재생성 가능)
 data/
+outputs/
 
 # Python
 __pycache__/
