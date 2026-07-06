@@ -1,4 +1,4 @@
-from .text import parse_label
+from .text import extract_note, parse_label, strip_note
 
 
 def assemble_sections(pages: list[dict]) -> list[dict]:
@@ -17,6 +17,7 @@ def assemble_sections(pages: list[dict]) -> list[dict]:
                 "applicability": None,
                 "cond_bands": [],
                 "act_items": [],
+                "raw_pages": [],
                 "pages": [],
                 "source_doc": pd.get("source_doc"),
             }
@@ -33,6 +34,8 @@ def assemble_sections(pages: list[dict]) -> list[dict]:
             s["source_doc"] = pd["source_doc"]
         s["cond_bands"].extend(pd["cond_bands"])
         s["act_items"].extend(pd["act_items"])
+        if pd.get("raw_text"):
+            s["raw_pages"].append(pd["raw_text"])
     return [sections[l] for l in order]
 
 
@@ -131,6 +134,8 @@ def build_records(section: dict) -> tuple[dict, list[dict]]:
         },
         "content": {
             "lco_statement": section["lco_stmt"],
+            "raw_text": " ".join(p for p in section.get("raw_pages", []) if p).strip()
+            or None,
             "actions_text": actions_text,
             "condition_blocks": condition_blocks,
         },
@@ -177,6 +182,9 @@ def build_records(section: dict) -> tuple[dict, list[dict]]:
                 }
             )
     if section["lco_stmt"]:
+        lco_note = extract_note(section["lco_stmt"])
+        lco_stmt_clean = strip_note(section["lco_stmt"])
+        note_str = f" Note: {lco_note}." if lco_note else ""
         flats.append(
             {
                 "id": f"{lco}/LCO",
@@ -197,12 +205,13 @@ def build_records(section: dict) -> tuple[dict, list[dict]]:
                     "condition_text": None,
                     "action_text": None,
                     "completion_time": None,
-                    "note": None,
+                    "note": lco_note,
                     "refs": [],
                     "body": (
                         f"LCO {lco} {section['title'] or ''}. "
                         f"Applicability: {section['applicability']}. "
-                        f"{section['lco_stmt']}"
+                        f"{lco_stmt_clean}"
+                        f"{note_str}"
                     ).strip(),
                 },
             }

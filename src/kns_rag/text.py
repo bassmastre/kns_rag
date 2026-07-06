@@ -13,19 +13,32 @@ RE_SR_REF = re.compile(r"SR\s+\d+\.\d+\.\d+\.\d+")
 
 
 def clean_text(txt: str) -> str:
-    """Normalize extracted text while preserving operational notes."""
+    """Normalize extracted text while preserving operational notes.
+
+    \ub300\uc2dc \uc2a4\uce90\ud3f4\ub529(NOTE/NOTES/REVIEWER'S NOTE)\uc744 normalize_raw\uc640 \ub3d9\uc77c \uaddc\uce59\uc73c\ub85c
+    \ucc98\ub9ac\ud55c\ub2e4. REVIEWER'S NOTE\ub294 \ud3b8\uc9d1\uc6a9 \uc8fc\uc11d\uc774\ubbc0\ub85c \ubcf8\ubb38\uc9f8 \uc81c\uac70, \uc77c\ubc18 NOTE/NOTES\ub294
+    \ub300\uc2dc\ub9cc \ubc97\uae30\uace0 \ubcf8\ubb38\uc744 (NOTE: ...) \ub9c8\ucee4\ub85c \uac10\uc2fc\ub2e4 \u2014 action/LCO note \ubd84\ub9ac
+    (extract_note/strip_note)\uac00 \uc774 \ub9c8\ucee4\uc5d0 \uc758\uc874\ud55c\ub2e4. \uc9dd \uc5c6\ub294 \ud5e4\ub354\u00b7\uace0\ub9bd \ub300\uc2dc \ub7f0\ub3c4 \uc81c\uac70.
+    \ub2e8\uc218\u00b7\ubcf5\uc218(NOTE/NOTES)\ub97c \ubaa8\ub450 \ucc98\ub9ac\ud55c\ub2e4.
+    """
+    # 1) REVIEWER'S NOTE \ud3b8\uc9d1 \ube14\ub85d: \ubcf8\ubb38\uc9f8 \uc81c\uac70 (\ub2e8\uc218\u00b7\ubcf5\uc218)
     txt = re.sub(
-        r"-{3,}\s*REVIEWER['\u2019]S\s+NOTE.*?-{3,}",
-        "",
+        r"-{3,}\s*REVIEWER['\u2019]S\s+NOTES?\s*-{3,}.*?-{3,}",
+        " ",
         txt,
         flags=re.DOTALL | re.IGNORECASE,
     )
+    # 2) \uc77c\ubc18 NOTE/NOTES \uc2a4\uce90\ud3f4\ub529: \ub300\uc2dc\ub9cc \ubc97\uae30\uace0 \ubcf8\ubb38\uc744 (NOTE: ...)\ub85c \uac10\uc308
     txt = re.sub(
-        r"-{3,}\s*NOTE\s*-{3,}(.*?)-{3,}",
+        r"-{3,}\s*NOTES?\s*-{3,}(.*?)-{3,}",
         lambda m: f"(NOTE: {re.sub(r'\s+', ' ', m.group(1)).strip()})",
         txt,
-        flags=re.DOTALL,
+        flags=re.DOTALL | re.IGNORECASE,
     )
+    # 3) \uc9dd \uc5c6\ub294(\ub2eb\ub294 \ub300\uc2dc \uc5c6\ub294) NOTE/NOTES \ud5e4\ub354 \uc81c\uac70
+    txt = re.sub(r"-{3,}\s*NOTES?\s*-{3,}", " ", txt, flags=re.IGNORECASE)
+    # 4) \ub0a8\uc740 \uace0\ub9bd \ub300\uc2dc \ub7f0 \uc81c\uac70
+    txt = re.sub(r"-{3,}", " ", txt)
     txt = txt.replace("[", "").replace("]", "")
     return re.sub(r"\s+", " ", txt).strip()
 
@@ -68,3 +81,31 @@ def connector_between(prev: dict | None, curr: dict | None) -> str | None:
     if prev is None or curr is None or prev["condition"] != curr["condition"]:
         return None
     return "OR" if prev["group"] == curr["group"] else "AND"
+
+
+def normalize_raw(txt: str) -> str:
+    """Minimal normalization for raw document text.
+
+    대시 스캐폴딩(----NOTE----, ----NOTES----, ----REVIEWER'S NOTE----)만
+    제거하고 노트 본문은 평문으로 남긴다. 인쇄된 실제 토큰(A., A.1, AND, OR,
+    대괄호)은 보존. 구조 마커는 주입하지 않는다 — baseline 청킹 입력용.
+    """
+    # 1) REVIEWER'S NOTE 편집 블록: 본문째 제거
+    txt = re.sub(
+        r"-{3,}\s*REVIEWER['\u2019]S\s+NOTES?\s*-{3,}.*?-{3,}",
+        " ",
+        txt,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    # 2) 일반 ----NOTE---- / ----NOTES---- 스캐폴딩: 대시만 벗기고 본문 유지
+    txt = re.sub(
+        r"-{3,}\s*NOTES?\s*-{3,}(.*?)-{3,}",
+        lambda m: " " + m.group(1).strip() + " ",
+        txt,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    # 3) 짝 없는(닫는 대시 없는) NOTE 헤더 스캐폴딩 제거
+    txt = re.sub(r"-{3,}\s*NOTES?\s*-{3,}", " ", txt, flags=re.IGNORECASE)
+    # 4) 남은 고립 대시 런 제거
+    txt = re.sub(r"-{3,}", " ", txt)
+    return re.sub(r"\s+", " ", txt).strip()

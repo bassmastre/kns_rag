@@ -22,10 +22,10 @@ from .text import (
     clean_text,
     extract_note,
     is_optional,
+    normalize_raw,
     strip_bracket,
     strip_note,
 )
-
 
 def parse_page_raw(page, cfg: dict) -> dict | None:
     """Parse one pdfplumber page into raw section fields."""
@@ -155,4 +155,54 @@ def parse_page_raw(page, cfg: dict) -> dict | None:
         "applicability": applic,
         "cond_bands": cond_bands_raw,
         "act_items": act_items_raw,
+        "raw_text": page_raw_text(words, reg, page_layout),
     }
+
+
+def page_raw_text(words: list[dict], reg: dict, page_layout: dict) -> str | None:
+    """Linearize one page into plain document text for baseline chunking.
+
+    Reads columns correctly (avoids extract_text() column mixing) but injects
+    no structure: only tokens physically printed in the PDF, in reading order.
+    Table is read condition-band by condition-band (COND -> ACT -> TIME within
+    each band) so a condition stays next to its own actions; band boundaries
+    are used only to reconstruct reading order, not passed to the chunker.
+    Region bounds follow page_regions (SURVEILLANCE section already excluded).
+    """
+    parts: list[str] = []
+
+    n_top, n_bot = reg["narr"]
+    nws = [w for w in words if n_top <= w["top"] < n_bot]
+    if nws:
+        parts.append(normalize_raw(join_words(nws)))
+
+    if reg["tbl"]:
+        t_top, t_bot = reg["tbl"]
+        tws = [w for w in words if t_top <= w["top"] < t_bot]
+        c1, c2 = page_layout["col1_max"], page_layout["col2_max"]
+        cond_ws = [w for w in tws if col_of(w, c1, c2) == "COND"]
+        act_ws = [w for w in tws if col_of(w, c1, c2) == "ACT"]
+        time_ws = [w for w in tws if col_of(w, c1, c2) == "TIME"]
+
+        anchors = sorted({w["top"] for w in cond_ws if RE_COND_LABEL.match(w["text"])})
+        if anchors:
+            for top, bottom in build_bands(anchors, t_bot):
+                seg = " ".join(
+                    x
+                    for x in (
+                        normalize_raw(join_words(words_in_band(cond_ws, top, bottom))),
+                        normalize_raw(join_words(words_in_band(act_ws, top, bottom))),
+                        normalize_raw(join_words(words_in_band(time_ws, top, bottom))),
+                    )
+                    if x
+                )
+                if seg:
+                    parts.append(seg)
+        else:
+            for col_ws in (cond_ws, act_ws, time_ws):
+                seg = normalize_raw(join_words(col_ws))
+                if seg:
+                    parts.append(seg)
+
+    text = normalize_raw(" ".join(p for p in parts if p))
+    return text or None

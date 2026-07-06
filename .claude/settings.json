@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/c/Users/user/anaconda3/envs/kns_rag/python -c ' *)"
+    ]
+  }
+}
