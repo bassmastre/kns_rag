@@ -45,9 +45,34 @@ scripts/build_corpus.py
 config.yaml    페이지 범위·컬럼 경계·모델명
 ```
 
+## 실행 (CLI)
+의존성 설치:
+```
+pip install pdfplumber pyyaml
+```
+
+코퍼스 빌드 (PDF → 구조화 JSON):
+```
+python scripts/build_corpus.py --config config.yaml
+```
+- 입력: `config.yaml`의 `pdf_path` + `sections` (LCO별 시작/끝 PDF 페이지, 1-indexed)
+- 출력 (`out_dir`, 기본 `data/processed/`):
+  - `sections.jsonl` — LCO 단위 계층 레코드 (`lco_statement`, `actions_text` 줄글, `condition_blocks` 구조)
+  - `struct_chunks.jsonl` — condition-action 단위로 펼친 flat 레코드
+- 콘솔에 섹션별 조건 라벨 연속성(`A,B,C...`) 경고와 빈 페이지 목록을 출력하니, 새 섹션을 추가하면 이 로그로 파싱이 깨졌는지 먼저 확인할 것.
+- 새 LCO 섹션을 추가하려면 `config.yaml`의 `sections` 리스트에 `{lco, start, end}`를 추가 (PDF 뷰어 기준 실제 페이지 번호, 목차 페이지 번호 아님).
+- 컬럼 경계(`col1_max`/`col2_max`)나 헤더 여백(`header_margin`)이 페이지마다 다르면 `layout.overrides.<lco>`에 개별 override 추가.
+
+결과 확인 예시:
+```
+python -c "import json; print(json.loads(open('data/processed/sections.jsonl', encoding='utf-8').readline())['content']['actions_text'])"
+```
+
+> `data/`는 `.gitignore` 대상이라 이 산출물들은 로컬 전용이며 재실행 시마다 새로 생성됨.
+
 ## 제약
-RTX 3060 12GB (임베딩 소형 + generator 7~8B 4-bit 양자화 or API / judge는 API 권장) ·
-논문 1~5p · 기간 ~1개월
+RTX 3060 12GB (임베딩 소형 + generator 7 ~ 8B 4-bit 양자화 or API / judge는 API 권장) ·
+논문 1 ~ 5p · 기간 ~1개월
 
 ## 현황
 - [x] 3.4.15 파싱 확정 (connector·옵션 액션·NOTE·LCO statement 정합)

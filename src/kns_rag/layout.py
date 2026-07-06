@@ -54,6 +54,20 @@ def extract_lco_and_title(words: list[dict], header_margin: int) -> tuple[str | 
     return lco, title
 
 
+def find_sr_heading_top(words: list[dict], tbl_top: float) -> float | None:
+    """Find the top of a 'SURVEILLANCE REQUIREMENTS' heading within the table region."""
+    candidates = [w for w in words if w["top"] >= tbl_top and w["text"] == "SURVEILLANCE"]
+    for w in sorted(candidates, key=lambda w: w["top"]):
+        row = sorted(
+            (x for x in words if abs(x["top"] - w["top"]) < 6),
+            key=lambda x: x["x0"],
+        )
+        idx = row.index(w)
+        if idx + 1 < len(row) and row[idx + 1]["text"] == "REQUIREMENTS":
+            return w["top"]
+    return None
+
+
 def page_regions(words: list[dict], page, cfg: dict) -> dict:
     """Split page words into narrative and table regions."""
     layout_cfg = cfg.get("layout", cfg)
@@ -82,5 +96,7 @@ def page_regions(words: list[dict], page, cfg: dict) -> dict:
     foot_top = min(foot_tops) if foot_tops else page.height
     ch = find_col_header(words)
     if ch:
-        return {"narr": (hdr_bot, ch[0]), "tbl": (ch[1], foot_top)}
+        sr_top = find_sr_heading_top(words, ch[1])
+        tbl_bottom = sr_top if sr_top is not None else foot_top
+        return {"narr": (hdr_bot, ch[0]), "tbl": (ch[1], tbl_bottom)}
     return {"narr": (hdr_bot, foot_top), "tbl": None}

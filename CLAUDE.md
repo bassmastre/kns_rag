@@ -1,49 +1,97 @@
-# 프로젝트: 원자력 규제문서 RAG 청킹 전략 비교 (KNS 추계 학술대회)
+# kns_rag — 프로젝트 컨텍스트
 
 ## 목적
-NUREG-1431 Vol.1(STS)/Vol.2(Bases)를 대상으로 4가지 청킹 전략을
-비교하는 짧은 실험 논문(1~5p, domestic conference) 코드 작성.
-청킹 전략만이 유일한 독립변수. 그 외 모든 요소(임베딩 모델,
-생성 LLM, judge LLM, retrieval 방식)는 고정.
+한국원자력학회(KNS) 추계 학술대회 제출용 짧은 실험 논문(1~5p, domestic conference 수준).
+주제: 원자력 규제 문서(STS) 대상 RAG에서 청킹 전략 비교.
 
-## 확정된 설계 (변경 금지 — 임의로 확장하지 말 것)
-- 대상 문서: NUREG-1431 Vol.1 + Vol.2, REVIEWER'S NOTE는 정규식으로 제거
-- QA 소스 섹션: 3.4.1, 3.4.10, 3.4.13, 3.4.16 (Vol.1), 대응 Bases 섹션 (Vol.2)
-  ※ 인덱싱은 전체 문서, QA 추출만 위 4개 섹션으로 한정
-- 청킹 전략 4종: naive fixed-length / sliding window / semantic
-  (임베딩 유사도 기반 경계 탐지) / hierarchical (summary node + 2단계 검색)
-- Retrieval: Dense search 고정 (lexical/hybrid 비교는 별도 프로젝트, 이 논문 범위 아님)
-- QA 데이터셋: 총 60~62개, 5개 유형
-  (extractive ~22, condition-action mapping ~22, definition ~6,
-  rationale/Vol.2 ~6, unanswerable ~6). 통계검정용 집계는 ~44개.
-- 평가: retrieval(Hit@k, MRR) + LLM-as-judge(QA accuracy, groundedness/hallucination)
-- Hit@k/MRR 판정: **span-level containment 기준(기본) + IoU(보조)**.
-  절대 청크 단위로 gold answer를 태깅하지 말 것 — 원문 좌표계
-  (doc_id, page, char_start, char_end) 기준으로 태깅.
-- 결과 테이블에는 전략별 평균 청크 크기를 항상 병기 (크기 confound 명시용)
+## 핵심 연구 설계 (확정)
+- 독립변수: **청킹 전략 하나만**. 임베딩·생성 LLM·판정 LLM·검색 방식은 전부 고정.
+- 비교 4개 전략: naive 고정길이 / sliding window / semantic / 구조 인식형(제안 방법, condition 경계 기반).
+- 핵심 주장: STS는 한 condition 안에서 AND/OR 논리 종속성으로 요건이 묶임. 의미 기반(semantic) 경계 탐지는 이 종속성을 끊음. 조항(condition) 경계로 자르는 구조 인식형이 semantic 포함 도메인 무관 방식보다 우수.
+- 검색: dense-only, 단일 단계. 구조 인식형은 flat 청크에 section path만 prepend(2단계 검색 아님 — 청킹을 유일 변수로 유지).
+- 평가: 검색 Hit@k·MRR(청크 ID 집합 기반 containment), 생성 LLM-as-judge(정확도·groundedness).
+- QA: 약 60문항, 5종(추출형~22 / 조건-액션 매핑~22 / 정의~6 / 근거~6 / 답없음~6).
+- Gold evidence: flat 청크 ID 집합(PDF 좌표·char offset 아님). 전략 독립적이어야 containment 매칭이 4개 전략 전반에 유효.
 
-## 명시적으로 제외 (하지 말 것)
-- Reranker 비교, ablation study, 멀티 임베딩/멀티 LLM 비교
-- Retrieval 방식 비교(lexical vs dense vs hybrid) — 별도 프로젝트
-- 위 4개 섹션 외 전체 문서에 대한 QA 자동 생성
+## 코퍼스
+- Primary: NUREG-1431 Vol.1 (STS, Westinghouse). Vol.2(Bases)는 후속 단계.
+- 인덱싱: 전체 문서. Gold QA 추출 대상: 3.4.1 / 3.4.10 / 3.4.13 / 3.4.16. 3.4(RCS) 전반은 distractor용.
 
-## 하드웨어 제약
-- RTX 3060 12GB 단일 GPU. 로컬 모델 사용 시 7~8B 양자화가 상한.
-- Judge/Generator LLM을 로컬로 할지 API로 할지는 아직 미확정 —
-  코드 작성 시 이 부분은 config로 분리해서 나중에 스위치 가능하게 할 것.
+## 데이터 스키마 (전처리 산출물, data/processed/)
+- `sections.jsonl`: LCO 조항당 1레코드. `actions_text`(prose; naive/sliding/semantic 원본) + `condition_blocks`(구조 메타데이터; 구조 인식형이 참조) 공존.
+- `struct_chunks.jsonl`: condition-action 단위로 평탄화한 청크(구조 인식형 전략의 실제 청크).
+- ※ 파일명은 JSON 구조(중첩 vs 평탄) 기준. 실험 전략명과 무관. 구 이름: hierarchical.jsonl→sections.jsonl, flat.jsonl→struct_chunks.jsonl.
 
-## 아직 미확정 (코드에서 하드코딩하지 말고 config/TODO로 남길 것)
-- Generator LLM / Judge LLM: 로컬 vs API
-- 임베딩 모델 종류
-- PDF 표 구조(ACTIONS 표의 AND/OR indent) 추출 방식:
-  pdfplumber extract_words() 좌표 기반 클러스터링으로 검증 예정,
-  아직 실제 페이지 테스트 전.
+## 파싱 (pdfplumber)
+- `extract_text()`는 다단(multi-column) ACTIONS 테이블에서 컬럼 섞임 → 사용 불가. `extract_words()` + x0 경계 컬럼 크로핑 사용.
+- `extract_tables()`는 0개 검출(NUREG에 ruling line 없음).
+- 컬럼 경계(경험적): CONDITION≈72/98, ACTION번호≈234, ACTION본문≈274, COMPLETION TIME≈425~443.
+- AND/OR connector는 **원문 텍스트에서 추출**. label group 번호로 추론 금지(C.2·E.2가 group 바뀌어도 OR인 반례 존재).
+- 헤더 제거(HEADER_MARGIN), 푸터는 어휘 앵커로 검출.
 
-## 코드 작성 원칙
-- 전처리(원문 좌표 인덱싱)와 청킹은 완전히 분리된 모듈. 청킹 전략이
-  바뀌어도 gold span 좌표는 불변이어야 함.
-- 청킹 전략 4종은 동일한 출력 스키마(chunk_id, text,
-  source_ref: {doc_id, char_start, char_end}, parent_id)를 따를 것.
-- 실험 코드는 4개 전략에 대해 동일 파이프라인이 반복 실행되는 구조로 —
-  전략별로 별도 스크립트를 만들지 말 것.
-- git add/commit/push를 절대 실행하지 말 것. 버전 관리는 사용자가 직접 수행한다.
+## 알려진 이슈 (오늘 작업 대상)
+1. Condition G에 SURVEILLANCE REQUIREMENTS 테이블이 섞여 들어감. ACTIONS 테이블 하단 경계 미절단. → layout.py에 "SURVEILLANCE REQUIREMENTS" 앵커 컷 추가 필요.
+2. 3.4.10/3.4.13/3.4.16 페이지 번호 미확정(config엔 3.4.15만 등록).
+3. C/D/E의 optional:true가 실제 대괄호 조항인지 원문 대조 필요(오탐 시 gold 틀어짐).
+
+## 코드 스타일
+- 클래스 허용(기존 금지 원칙 해제). 단 과도한 추상화·조기 일반화 지양.
+- 스코프 밖 모듈 미리 만들지 말 것. chunking/·span_index/ 스켈레톤은 폐기 설계(2단계 검색·좌표 gold) 반영 중 → 걷어낼 대상.
+- 버그는 반복 수정으로 잡음.
+
+## 응답 스타일
+- 결론 먼저. 서론·격려 문구 없이 간결하게.
+- 한국어로 논의. RAG 표준 용어(chunk, retrieval, Hit@k 등)는 영어 유지 가능. 비기술 용어의 문장 중간 영어 삽입·즉석 조어 금지.
+- 확정 사항 vs 참고 논문 내용 엄격히 구분. 참고 논문 세부를 프로젝트 확정 결정으로 취급 금지.
+
+## 환경
+- HW: RTX 3060 12GB 1장. 대규모 파인튜닝 배제. API 사용 시 비용 언급.
+- env: conda `kns_rag`, Python 3.11. 기간: 약 1개월.# kns_rag — 프로젝트 컨텍스트
+
+## 목적
+한국원자력학회(KNS) 추계 학술대회 제출용 짧은 실험 논문(1~5p, domestic conference 수준).
+주제: 원자력 규제 문서(STS) 대상 RAG에서 청킹 전략 비교.
+
+## 핵심 연구 설계 (확정)
+- 독립변수: **청킹 전략 하나만**. 임베딩·생성 LLM·판정 LLM·검색 방식은 전부 고정.
+- 비교 4개 전략: naive 고정길이 / sliding window / semantic / 구조 인식형(제안 방법, condition 경계 기반).
+- 핵심 주장: STS는 한 condition 안에서 AND/OR 논리 종속성으로 요건이 묶임. 의미 기반(semantic) 경계 탐지는 이 종속성을 끊음. 조항(condition) 경계로 자르는 구조 인식형이 semantic 포함 도메인 무관 방식보다 우수.
+- 검색: dense-only, 단일 단계. 구조 인식형은 flat 청크에 section path만 prepend(2단계 검색 아님 — 청킹을 유일 변수로 유지).
+- 평가: 검색 Hit@k·MRR(청크 ID 집합 기반 containment), 생성 LLM-as-judge(정확도·groundedness).
+- QA: 약 60문항, 5종(추출형~22 / 조건-액션 매핑~22 / 정의~6 / 근거~6 / 답없음~6).
+- Gold evidence: flat 청크 ID 집합(PDF 좌표·char offset 아님). 전략 독립적이어야 containment 매칭이 4개 전략 전반에 유효.
+
+## 코퍼스
+- Primary: NUREG-1431 Vol.1 (STS, Westinghouse). Vol.2(Bases)는 후속 단계.
+- 인덱싱: 전체 문서. Gold QA 추출 대상: 3.4.1 / 3.4.10 / 3.4.13 / 3.4.16. 3.4(RCS) 전반은 distractor용.
+
+## 데이터 스키마 (전처리 산출물, data/processed/)
+- `sections.jsonl`: LCO 조항당 1레코드. `actions_text`(prose; naive/sliding/semantic 원본) + `condition_blocks`(구조 메타데이터; 구조 인식형이 참조) 공존.
+- `struct_chunks.jsonl`: condition-action 단위로 평탄화한 청크(구조 인식형 전략의 실제 청크).
+- ※ 파일명은 JSON 구조(중첩 vs 평탄) 기준. 실험 전략명과 무관. 구 이름: hierarchical.jsonl→sections.jsonl, flat.jsonl→struct_chunks.jsonl.
+
+## 파싱 (pdfplumber)
+- `extract_text()`는 다단(multi-column) ACTIONS 테이블에서 컬럼 섞임 → 사용 불가. `extract_words()` + x0 경계 컬럼 크로핑 사용.
+- `extract_tables()`는 0개 검출(NUREG에 ruling line 없음).
+- 컬럼 경계(경험적): CONDITION≈72/98, ACTION번호≈234, ACTION본문≈274, COMPLETION TIME≈425~443.
+- AND/OR connector는 **원문 텍스트에서 추출**. label group 번호로 추론 금지(C.2·E.2가 group 바뀌어도 OR인 반례 존재).
+- 헤더 제거(HEADER_MARGIN), 푸터는 어휘 앵커로 검출.
+
+## 알려진 이슈 (오늘 작업 대상)
+1. Condition G에 SURVEILLANCE REQUIREMENTS 테이블이 섞여 들어감. ACTIONS 테이블 하단 경계 미절단. → layout.py에 "SURVEILLANCE REQUIREMENTS" 앵커 컷 추가 필요.
+2. 3.4.10/3.4.13/3.4.16 페이지 번호 미확정(config엔 3.4.15만 등록).
+3. C/D/E의 optional:true가 실제 대괄호 조항인지 원문 대조 필요(오탐 시 gold 틀어짐).
+
+## 코드 스타일
+- 클래스 허용(기존 금지 원칙 해제). 단 과도한 추상화·조기 일반화 지양.
+- 스코프 밖 모듈 미리 만들지 말 것. chunking/·span_index/ 스켈레톤은 폐기 설계(2단계 검색·좌표 gold) 반영 중 → 걷어낼 대상.
+- 버그는 반복 수정으로 잡음.
+
+## 응답 스타일
+- 결론 먼저. 서론·격려 문구 없이 간결하게.
+- 한국어로 논의. RAG 표준 용어(chunk, retrieval, Hit@k 등)는 영어 유지 가능. 비기술 용어의 문장 중간 영어 삽입·즉석 조어 금지.
+- 확정 사항 vs 참고 논문 내용 엄격히 구분. 참고 논문 세부를 프로젝트 확정 결정으로 취급 금지.
+
+## 환경
+- HW: RTX 3060 12GB 1장. 대규모 파인튜닝 배제. API 사용 시 비용 언급.
+- env: conda `kns_rag`, Python 3.11. 기간: 약 1개월.

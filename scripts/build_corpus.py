@@ -8,8 +8,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-import kns_rag.parse as parse_mod
-from kns_rag.corpus import assemble_sections, build_records
+import src.kns_rag.parse as parse_mod
+from src.kns_rag.corpus import assemble_sections, build_records
 
 
 parser = argparse.ArgumentParser()
@@ -53,11 +53,11 @@ for s in sections:
     hier_records.append(h)
     flat_records.extend(f)
 
-with (out_dir / "hierarchical.jsonl").open("w", encoding="utf-8") as fh:
+with (out_dir / "sections.jsonl").open("w", encoding="utf-8") as fh:
     for r in hier_records:
         fh.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-with (out_dir / "flat.jsonl").open("w", encoding="utf-8") as fh:
+with (out_dir / "struct_chunks.jsonl").open("w", encoding="utf-8") as fh:
     for r in flat_records:
         fh.write(json.dumps(r, ensure_ascii=False) + "\n")
 

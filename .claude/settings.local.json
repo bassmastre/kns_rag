@@ -1,16 +1,18 @@
 {
   "permissions": {
-    "defaultMode": "acceptEdits",
     "allow": [
       "Read(//c//**)",
       "Read(//c/Users/user/**)",
       "Read(//c/Users/user/Desktop/**)",
-      "Bash(conda env *)"
+      "Bash(conda env *)",
+      "Bash(python -c ' *)",
+      "Bash(python scripts/build_corpus.py --config config.yaml)"
     ],
     "deny": [
-      "Bash(git add:*)", 
-      "Bash(git commit:*)", 
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
       "Bash(git push:*)"
-    ]
+    ],
+    "defaultMode": "acceptEdits"
   }
 }
