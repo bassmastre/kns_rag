@@ -18,17 +18,17 @@
 ## 코퍼스
 - **문서**: NUREG-1431 Vol.1 (STS) — 인덱싱은 3.4(RCS) 전체 (distractor 확보)
 - **Gold QA 대상**: 3.4.1 / 3.4.10 / 3.4.13 / 3.4.16 4개 섹션
-- **canonical source**: `hierarchical.jsonl`
+- **canonical source**: `sections.jsonl`
   - `actions_text` (연속 줄글) → naive/sliding/semantic 입력
   - `condition_blocks` (구조) → hierarchical 입력
-- `flat.jsonl` — condition-action 단위 파생 뷰 (dense baseline)
+- `struct_chunks.jsonl` — condition-action 단위 파생 뷰 (dense baseline)
 
 ## 평가
 - **Retrieval**: Hit@k, MRR (containment 기반, IoU 보조) + 평균 청크 크기·개수 병기
 - **Generation**: LLM-as-judge (accuracy, groundedness)
 - **Gold evidence**: flat chunk id 집합 (원문 좌표 아님)
 
-## 왜 hierarchical이 이기나 (실험 가설)
+## 실험 가설ㄴ
 - 조건의 조치들은 AND/OR로 묶임. 한 condition을 통째로 청킹하면 이 논리가 보존됨.
 - Semantic 청킹은 B.1.1(grab sample)과 B.2.1(restore)을 의미가 다르다고 갈라놓지만,
   규제 논리상 한 조건의 필수 조치 쌍이라 갈라지면 안 됨 → 부분 회수 → 성능 저하.
@@ -60,7 +60,7 @@ python scripts/build_corpus.py --config config.yaml
   - `sections.jsonl` — LCO 단위 계층 레코드 (`lco_statement`, `actions_text` 줄글, `condition_blocks` 구조)
   - `struct_chunks.jsonl` — condition-action 단위로 펼친 flat 레코드
 - 콘솔에 섹션별 조건 라벨 연속성(`A,B,C...`) 경고와 빈 페이지 목록을 출력하니, 새 섹션을 추가하면 이 로그로 파싱이 깨졌는지 먼저 확인할 것.
-- 새 LCO 섹션을 추가하려면 `config.yaml`의 `sections` 리스트에 `{lco, start, end}`를 추가 (PDF 뷰어 기준 실제 페이지 번호, 목차 페이지 번호 아님).
+- 새 LCO 섹션을 추가하려면 `config.yaml`의 `sections` 리스트에 `{start, end}`(PDF 뷰어 기준 실제 페이지 번호, 목차 페이지 번호 아님)만 추가하면 됨 — LCO ID/제목은 페이지 헤더에서 자동 인식되므로 이름을 따로 넣을 필요 없음.
 - 컬럼 경계(`col1_max`/`col2_max`)나 헤더 여백(`header_margin`)이 페이지마다 다르면 `layout.overrides.<lco>`에 개별 override 추가.
 
 결과 확인 예시:
@@ -76,7 +76,7 @@ RTX 3060 12GB (임베딩 소형 + generator 7 ~ 8B 4-bit 양자화 or API / judg
 
 ## 현황
 - [x] 3.4.15 파싱 확정 (connector·옵션 액션·NOTE·LCO statement 정합)
-- [ ] 파싱 모듈화 (codex)
+- [ ] 파싱 모듈화
 - [ ] 3.4 전체 추출 (gold=정밀, distractor=줄글 fallback)
 - [ ] 임베딩/generator/judge 확정
 - [ ] QA 60여 개 (5 타입) + 4전략 청킹 → 평가

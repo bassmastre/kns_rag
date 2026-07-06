@@ -8,8 +8,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-import src.kns_rag.parse as parse_mod
-from src.kns_rag.corpus import assemble_sections, build_records
+import kns_rag.parse as parse_mod
+from kns_rag.corpus import assemble_sections, build_records
 
 
 parser = argparse.ArgumentParser()
@@ -27,7 +27,7 @@ pdf_path = Path(cfg["pdf_path"])
 if not pdf_path.is_absolute():
     pdf_path = ROOT / pdf_path
 
-out_dir = Path(cfg["out_dir"])
+out_dir = Path(cfg["paths"]["processed_dir"])
 if not out_dir.is_absolute():
     out_dir = ROOT / out_dir
 out_dir.mkdir(parents=True, exist_ok=True)
