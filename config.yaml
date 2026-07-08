@@ -73,8 +73,15 @@ chunking:
       chunk_size: 900
       overlap: 200
     semantic:
+      # null이면 embedding_model.name을 사용한다.
+      # 오프라인 환경에서는 로컬 SentenceTransformer 모델 경로로 지정.
+      model_name: null
+      min_chars: 450
       target_chars: 900
       max_chars: 1200
+      similarity_percentile: 20
+      similarity_threshold: null
+      batch_size: 32
 
 embedding_model:
   provider: null  # TODO: 미확정
