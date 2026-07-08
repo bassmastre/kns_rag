@@ -55,7 +55,8 @@ for s in sections:
 
 with (out_dir / "raw.jsonl").open("w", encoding="utf-8") as fh:
     for r in hier_records:
-        fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+        slim = {"id": r["id"], "metadata": r["metadata"], "raw_text": r["content"]["raw_text"]}
+        fh.write(json.dumps(slim, ensure_ascii=False) + "\n")
 
 with (out_dir / "hierarchical_source.jsonl").open("w", encoding="utf-8") as fh:
     for r in flat_records:

@@ -54,16 +54,23 @@ def extract_lco_and_title(words: list[dict], header_margin: int) -> tuple[str | 
     return lco, title
 
 
-def find_sr_heading_top(words: list[dict], tbl_top: float) -> float | None:
-    """Find the top of a 'SURVEILLANCE REQUIREMENTS' heading within the table region."""
-    candidates = [w for w in words if w["top"] >= tbl_top and w["text"] == "SURVEILLANCE"]
+def find_sr_heading_top(words: list[dict], top_bound: float) -> float | None:
+    """Find the top of a SURVEILLANCE section heading at/below top_bound.
+
+    'SURVEILLANCE' 단독으로 탐지하되, 같은 행 다음 토큰이 'REQUIREMENTS'(섹션
+    제목) 또는 'FREQUENCY'(SR 표 컬럼 헤더)인 경우만 앵커로 인정해 오탐을 막는다.
+    섹션 제목이 header_margin 위로 흡수돼 'SURVEILLANCE FREQUENCY'만 남는 페이지
+    (예: 3.4.20-2)도 잡기 위함. SR 섹션은 코퍼스에서 제외 확정이므로, 이 top이
+    ACTIONS 표/narrative 하단 컷이 되어 raw·struct 양 경로에 동일 적용된다.
+    """
+    candidates = [w for w in words if w["top"] >= top_bound and w["text"] == "SURVEILLANCE"]
     for w in sorted(candidates, key=lambda w: w["top"]):
         row = sorted(
             (x for x in words if abs(x["top"] - w["top"]) < 6),
             key=lambda x: x["x0"],
         )
         idx = row.index(w)
-        if idx + 1 < len(row) and row[idx + 1]["text"] == "REQUIREMENTS":
+        if idx + 1 < len(row) and row[idx + 1]["text"] in ("REQUIREMENTS", "FREQUENCY"):
             return w["top"]
     return None
 
@@ -94,9 +101,12 @@ def page_regions(words: list[dict], page, cfg: dict) -> dict:
         ):
             foot_tops.append(w["top"])
     foot_top = min(foot_tops) if foot_tops else page.height
+    # SURVEILLANCE 섹션은 코퍼스 제외 확정 — 있으면 그 top이 하단 컷.
+    # COMPLETION 컬럼 헤더가 없는 SR 전용 페이지(narr로 흘러 raw_text에 누출되던
+    # 경로)도 잡도록 col header 유무와 무관하게 계산해 두 branch에 동일 적용한다.
+    sr_top = find_sr_heading_top(words, hdr_bot)
+    bottom = sr_top if sr_top is not None else foot_top
     ch = find_col_header(words)
     if ch:
-        sr_top = find_sr_heading_top(words, ch[1])
-        tbl_bottom = sr_top if sr_top is not None else foot_top
-        return {"narr": (hdr_bot, ch[0]), "tbl": (ch[1], tbl_bottom)}
-    return {"narr": (hdr_bot, foot_top), "tbl": None}
+        return {"narr": (hdr_bot, ch[0]), "tbl": (ch[1], bottom)}
+    return {"narr": (hdr_bot, bottom), "tbl": None}

@@ -2,6 +2,7 @@
 data/
 outputs/
 
+text.json
 # Python
 __pycache__/
 *.pyc
@@ -11,3 +12,6 @@ __pycache__/
 # env / IDE
 .env
 .vscode/
+
+# samples
+text.json

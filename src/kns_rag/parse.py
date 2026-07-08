@@ -155,11 +155,34 @@ def parse_page_raw(page, cfg: dict) -> dict | None:
         "applicability": applic,
         "cond_bands": cond_bands_raw,
         "act_items": act_items_raw,
-        "raw_text": page_raw_text(words, reg, page_layout),
+        "raw_text": page_raw_text(words, reg, page_layout, lco),
     }
 
 
-def page_raw_text(words: list[dict], reg: dict, page_layout: dict) -> str | None:
+def narrative_from_lco(nws: list[dict], lco: str | None) -> list[dict]:
+    """Drop a leading section-heading row ('3.4.x <title>') from the narrative.
+
+    첫 페이지 narrative 선두엔 페이지 헤더 제목이 한 번 더 인쇄된 라인이 있어
+    비교군(raw_text)만 제목을 이중으로 갖게 된다. 'LCO <id>' 문장 라인부터
+    시작하도록 그 위 라인을 잘라 struct 경로(LCO ...부터 정규식 추출)와 맞춘다.
+    LCO 라인이 없는 연속 페이지는 그대로 둔다.
+    """
+    rows: dict[int, list[dict]] = {}
+    for w in nws:
+        rows.setdefault(round(w["top"]), []).append(w)
+    lco_top = None
+    for top in sorted(rows):
+        if re.match(r"^LCO\s+\d+\.\d+\.\d+\b", join_words(rows[top])):
+            lco_top = top
+            break
+    if lco_top is None:
+        return nws
+    return [w for w in nws if round(w["top"]) >= lco_top]
+
+
+def page_raw_text(
+    words: list[dict], reg: dict, page_layout: dict, lco: str | None = None
+) -> str | None:
     """Linearize one page into plain document text for baseline chunking.
 
     Reads columns correctly (avoids extract_text() column mixing) but injects
@@ -172,7 +195,9 @@ def page_raw_text(words: list[dict], reg: dict, page_layout: dict) -> str | None
     parts: list[str] = []
 
     n_top, n_bot = reg["narr"]
-    nws = [w for w in words if n_top <= w["top"] < n_bot]
+    nws = narrative_from_lco(
+        [w for w in words if n_top <= w["top"] < n_bot], lco
+    )
     if nws:
         parts.append(normalize_raw(join_words(nws)))
 

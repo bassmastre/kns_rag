@@ -108,4 +108,8 @@ def normalize_raw(txt: str) -> str:
     txt = re.sub(r"-{3,}\s*NOTES?\s*-{3,}", " ", txt, flags=re.IGNORECASE)
     # 4) 남은 고립 대시 런 제거
     txt = re.sub(r"-{3,}", " ", txt)
+    # 5) 대괄호(plant-specific 마커) 제거 — 안쪽 본문은 유지("[or repair]"->"or
+    #    repair"). struct(clean_text)와 동일 처리로 검색 단위 텍스트를 일치시킨다.
+    #    optional 정보는 struct optional 필드에 이미 보존되어 정보 손실 없음.
+    txt = txt.replace("[", "").replace("]", "")
     return re.sub(r"\s+", " ", txt).strip()
