@@ -9,8 +9,6 @@
       "Bash(python scripts/build_corpus.py --config config.yaml)"
     ],
     "deny": [
-      "Bash(git add:*)",
-      "Bash(git commit:*)",
       "Bash(git push:*)"
     ],
     "defaultMode": "acceptEdits"
