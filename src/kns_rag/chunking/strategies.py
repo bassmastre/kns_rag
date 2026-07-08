@@ -9,6 +9,7 @@ scripts/build_chunks.py에서 처리한다.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any
 
 RE_ACTION_LABEL = re.compile(r"\b([A-Z]\.\d+(?:\.\d+)?)\b")
@@ -33,7 +34,15 @@ STRATEGY_INPUTS = {
 DEFAULT_PARAMS = {
     "naive_fixed_length": {"chunk_size": 900},
     "sliding_window": {"chunk_size": 900, "overlap": 200},
-    "semantic": {"target_chars": 900, "max_chars": 1200},
+    "semantic": {
+        "model_name": None,
+        "min_chars": 450,
+        "target_chars": 900,
+        "max_chars": 1200,
+        "similarity_percentile": 20,
+        "similarity_threshold": None,
+        "batch_size": 32,
+    },
     "action_logic": {},
     "condition_aware": {},
     "hierarchical": {},
@@ -180,53 +189,204 @@ def sliding_window(
     return chunks
 
 
-def _split_sentences(text: str) -> list[str]:
-    return [s.strip() for s in RE_SENTENCE_BOUNDARY.split(text) if s.strip()]
+def _split_sentences_with_spans(text: str) -> list[tuple[str, int, int]]:
+    """Split text into sentence-like units and keep char spans.
+
+    PDF-extracted regulatory text is not perfectly punctuated. This function uses
+    punctuation boundaries when available and falls back to one unit for the whole
+    text if no boundary is detected.
+    """
+    spans: list[tuple[str, int, int]] = []
+    start = 0
+    for part in RE_SENTENCE_BOUNDARY.split(text):
+        sent = part.strip()
+        if not sent:
+            start += len(part)
+            continue
+        pos = text.find(sent, start)
+        if pos < 0:
+            pos = start
+        end = pos + len(sent)
+        spans.append((sent, pos, end))
+        start = end
+    if not spans and text.strip():
+        stripped = text.strip()
+        pos = text.find(stripped)
+        spans.append((stripped, pos, pos + len(stripped)))
+    return spans
+
+
+@lru_cache(maxsize=4)
+def _load_sentence_transformer(model_name: str):
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as exc:
+        raise ImportError(
+            "semantic chunking requires sentence-transformers. "
+            "Install it or build non-semantic strategies only."
+        ) from exc
+    return SentenceTransformer(model_name)
+
+
+def _cosine_similarities(embeddings: Any) -> list[float]:
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise ImportError("semantic chunking requires numpy") from exc
+
+    arr = np.asarray(embeddings, dtype="float32")
+    if len(arr) < 2:
+        return []
+    norms = np.linalg.norm(arr, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    arr = arr / norms
+    return [float((arr[i] * arr[i + 1]).sum()) for i in range(len(arr) - 1)]
+
+
+def _semantic_cut_threshold(
+    similarities: list[float],
+    *,
+    similarity_percentile: float,
+    similarity_threshold: float | None,
+) -> float | None:
+    if not similarities:
+        return None
+    if similarity_threshold is not None:
+        return float(similarity_threshold)
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise ImportError("semantic chunking requires numpy") from exc
+    return float(np.percentile(similarities, similarity_percentile))
+
+
+def _build_semantic_spans(
+    units: list[tuple[str, int, int]],
+    similarities: list[float],
+    *,
+    min_chars: int,
+    target_chars: int,
+    max_chars: int,
+    threshold: float | None,
+) -> list[tuple[int, int, int, int, list[float]]]:
+    """Return chunk spans from sentence units using adjacent similarity drops.
+
+    Output tuple:
+    (unit_start_idx, unit_end_exclusive, char_start, char_end, boundary_scores_inside)
+    """
+    if not units:
+        return []
+
+    spans = []
+    start_unit = 0
+    start_char = units[0][1]
+    internal_scores: list[float] = []
+
+    for i in range(len(units) - 1):
+        current_end = units[i][2]
+        current_len = current_end - start_char
+        sim = similarities[i]
+        internal_scores.append(sim)
+
+        low_similarity = threshold is not None and sim <= threshold
+        reached_target = current_len >= target_chars
+        reached_max = units[i + 1][2] - start_char > max_chars
+        can_cut = current_len >= min_chars
+
+        if reached_max or (can_cut and low_similarity and reached_target):
+            spans.append((start_unit, i + 1, start_char, current_end, internal_scores[:-1]))
+            start_unit = i + 1
+            start_char = units[start_unit][1]
+            internal_scores = []
+
+    spans.append((start_unit, len(units), start_char, units[-1][2], internal_scores))
+    return spans
 
 
 def semantic(
     records: list[dict[str, Any]],
     *,
+    model_name: str | None = None,
+    min_chars: int = 450,
     target_chars: int = 900,
     max_chars: int = 1200,
+    similarity_percentile: float = 20,
+    similarity_threshold: float | None = None,
+    batch_size: int = 32,
 ) -> list[dict[str, Any]]:
-    """Lightweight semantic-ish chunking using sentence boundaries.
+    """Embedding-based semantic boundary chunking.
 
-    This is a deterministic placeholder for the current pipeline stage. It keeps
-    natural sentence boundaries instead of hard character cuts. If an embedding
-    boundary detector is added later, it should preserve this output schema.
+    Algorithm:
+    1. Split each raw LCO text into sentence-like units.
+    2. Embed units with SentenceTransformer.
+    3. Compute adjacent-unit cosine similarities.
+    4. Cut at low-similarity boundaries, while respecting min/target/max chars.
+
+    This is still a baseline: it uses semantic similarity only, not regulatory
+    condition/action structure.
     """
-    if target_chars <= 0 or max_chars <= 0:
-        raise ValueError("target_chars and max_chars must be positive")
-    if target_chars > max_chars:
-        raise ValueError("target_chars must be <= max_chars")
+    if not model_name:
+        raise ValueError(
+            "semantic chunking requires chunking.params.semantic.model_name "
+            "or embedding_model.name in config.yaml"
+        )
+    if min_chars <= 0 or target_chars <= 0 or max_chars <= 0:
+        raise ValueError("min_chars, target_chars, and max_chars must be positive")
+    if min_chars > target_chars or target_chars > max_chars:
+        raise ValueError("expected min_chars <= target_chars <= max_chars")
+    if not (0 <= similarity_percentile <= 100):
+        raise ValueError("similarity_percentile must be between 0 and 100")
 
+    model = _load_sentence_transformer(model_name)
     chunks = []
+
     for record in records:
         text = _record_text(record)
+        if not text:
+            continue
         base = _base_metadata(record)
         lco = base.get("lco")
-        sentences = _split_sentences(text)
-        if not sentences and text:
-            sentences = [text]
+        units = _split_sentences_with_spans(text)
+        if not units:
+            continue
 
-        current: list[str] = []
-        chunk_start = 0
-        cursor = 0
-        idx = 1
+        unit_texts = [u[0] for u in units]
+        embeddings = model.encode(
+            unit_texts,
+            batch_size=batch_size,
+            convert_to_numpy=True,
+            normalize_embeddings=False,
+            show_progress_bar=False,
+        )
+        similarities = _cosine_similarities(embeddings)
+        threshold = _semantic_cut_threshold(
+            similarities,
+            similarity_percentile=similarity_percentile,
+            similarity_threshold=similarity_threshold,
+        )
+        spans = _build_semantic_spans(
+            units,
+            similarities,
+            min_chars=min_chars,
+            target_chars=target_chars,
+            max_chars=max_chars,
+            threshold=threshold,
+        )
 
-        def flush(end_cursor: int) -> None:
-            nonlocal current, chunk_start, idx
-            if not current:
-                return
-            body = " ".join(current).strip()
+        for idx, (unit_start, unit_end, start, end, scores) in enumerate(spans, 1):
+            body = text[start:end].strip()
             metadata = {
                 **base,
                 "parent_id": record.get("id"),
-                "chunk_type": "semantic_sentence_group",
+                "chunk_type": "semantic_embedding_boundary",
                 "chunk_index": idx,
-                "char_start": chunk_start,
-                "char_end": end_cursor,
+                "char_start": start,
+                "char_end": end,
+                "unit_start": unit_start,
+                "unit_end": unit_end,
+                "embedding_model": model_name,
+                "similarity_threshold": threshold,
+                "mean_internal_similarity": (sum(scores) / len(scores)) if scores else None,
                 "evidence_ids": _evidence_ids_from_text(lco, body),
             }
             chunks.append(
@@ -237,23 +397,6 @@ def semantic(
                     metadata=metadata,
                 )
             )
-            idx += 1
-            current = []
-
-        for sent in sentences:
-            pos = text.find(sent, cursor)
-            if pos < 0:
-                pos = cursor
-            sent_end = pos + len(sent)
-            next_text = " ".join([*current, sent]).strip()
-            if current and (len(next_text) > max_chars or len(" ".join(current)) >= target_chars):
-                flush(pos)
-                chunk_start = pos
-            if not current:
-                chunk_start = pos
-            current.append(sent)
-            cursor = sent_end
-        flush(len(text))
 
     return chunks
 
