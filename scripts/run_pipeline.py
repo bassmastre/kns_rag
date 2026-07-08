@@ -7,14 +7,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# 01~03은 사람 개입 없이 순서 실행 가능. retrieve(04)부터는
+# data/qa/qa.jsonl(사람 검증 QA)이 있어야 동작한다.
 STAGES = ["corpus", "chunks", "index", "retrieve", "rag_inputs", "eval"]
 COMMANDS = {
-    "corpus": ["scripts/build_corpus.py"],
-    "chunks": ["scripts/build_chunks.py"],
-    "index": ["scripts/build_index.py"],
-    "retrieve": ["scripts/retrieve.py"],
-    "rag_inputs": ["scripts/build_rag_inputs.py"],
-    "eval": ["scripts/eval_retrieval.py"],
+    "corpus": ["scripts/01_build_corpus.py"],
+    "chunks": ["scripts/02_build_chunks.py"],
+    "index": ["scripts/03_build_index.py"],
+    "retrieve": ["scripts/04_retrieve.py"],
+    "rag_inputs": ["scripts/05_build_rag_inputs.py"],
+    "eval": ["scripts/06_eval_retrieval.py"],
 }
 
 
