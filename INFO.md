@@ -1,163 +1,294 @@
 # INFO — 연구 방향·가설·설계 결정
 
-이 문서는 **왜** 이 실험을 이렇게 설계했는지를 정리한다. (무엇을·어떻게
-실행하는지는 [`README.md`](README.md).) 협업 중 방향이 흔들릴 때 이 문서가
-기준점이다. 여기 적힌 것이 확정 사항이고, 참고 논문의 세부는 확정 사항이 아니다.
+이 문서는 **왜** 이 실험을 이렇게 설계했는지를 정리한다. 무엇을 어떻게
+실행하는지는 [`README.md`](README.md)를 기준으로 한다. 협업 중 방향이 흔들릴
+때 이 문서가 기준점이다.
 
 ---
 
 ## 1. 연구 질문
 
-> 청킹 전략이, **식별자가 조밀하고 구조가 강한** 원자력 규제 문서 위에서
-> RAG 검색·생성 성능에 어떤 영향을 주는가?
+> 구조가 강한 원자력 규제 문서(STS)에서 RAG는 어떤 유형의 질문에서 실패하며,
+> 그 실패 중 어느 부분이 청킹 전략으로 완화되는가?
 
-일반 도메인에서 semantic 청킹은 흔히 강한 baseline으로 취급된다. 이 연구는
-그 통념이 STS 같은 규제 문서에서 **깨진다**는 것을 보이려 한다.
+초기 질문은 "hierarchical chunking이 semantic chunking보다 우수한가"였지만,
+현재 프레이밍은 더 좁고 정직하다. 핵심은 **RAG 실패 유형 진단 + 청킹 전략별
+유효 범위 분석**이다.
 
-## 2. 핵심 주장 (thesis)
+---
 
-**"더 정교한 청킹"이 아니라 "도메인 구조를 아는 청킹"이 이긴다.**
+## 2. 핵심 주장
 
-STS의 ACTIONS 표는 하나의 CONDITION 아래 여러 Required Action이 **AND/OR
-논리로 묶여** 있다. 이 논리적 묶음이 검색 단위의 최소 의미 단위다. 조각을
-따로 회수하면 조치의 충분·필요 관계가 무너진다.
+**"더 정교한 청킹"이 아니라 "도메인 구조를 보존하는 청킹"이 유리하다.**
 
-- 정방향: "이 조건에서 뭘 해야 하나" → 조건 아래 모든 액션(+AND/OR)이 한
-  청크에 있어야 완전한 답.
-- 역방향: "이 조치는 어떤 조건이 트리거하나" → 조건문과 액션이 같은 청크에
-  있어야 답 가능.
+NUREG-1431 STS의 ACTIONS 표는 하나의 Condition 아래 Required Action과
+Completion Time이 AND/OR 논리로 연결된다. 이 구조가 무너지면 retrieval은 관련
+텍스트 일부를 회수해도 답변이 불완전해질 수 있다.
 
-**semantic 청킹의 실패 메커니즘**: 임베딩 유사도는 "grab sample 채취"와
-"모니터 복구"를 의미가 다르다고 보고 경계를 그을 수 있다. 그러나 규제
-논리상 이 둘은 한 조건의 필수 조치 쌍(AND) 또는 대안 쌍(OR)이다. semantic이
-이를 가르면 부분 회수 → groundedness 저하로 이어진다.
+예상되는 실패 메커니즘:
 
-**hierarchical(제안)**: CONDITION 경계를 청크 경계로 삼아 이 논리를 통째로
-보존한다. 도메인 무관 기법은 구조를 모르므로 이 보존을 보장하지 못한다.
+- fixed-length: condition/action/CT가 물리적으로 잘림
+- sliding-window: overlap으로 recall은 보완되지만 중복과 경계 노이즈 증가
+- semantic: embedding coherence 기준으로 경계를 고르지만 STS의 logical boundary를
+  보장하지 않음
+- structure-aware: Condition–Required Action–Completion Time–connector를 한 단위로
+  보존
 
-## 3. 가설 (검증 대상)
+---
 
-- **H1 (1차)**: 도메인 무관 semantic 청킹은 이 도메인에서 hierarchical보다
-  검색 성능(Hit@k·MRR)이 낮다.
-- **H2**: 특히 condition–action mapping 유형 QA에서 격차가 크다
-  (AND/OR 논리가 직접 관여하므로).
-- **보조 관찰**: naive/sliding은 구조를 모르지만 큰 청크를 우연히 만들어
-  일부 조건을 통째로 담을 수 있다 → semantic만큼 명확히 지지 않을 수 있다.
-  이 경우 "semantic의 정교함이 오히려 독"이라는 서사가 강화된다.
+## 3. 검증 가설
 
-### 반증 조건 (미리 명시)
+### H1 — retrieval
 
-정직한 실험을 위해 가설이 **틀렸다고 볼 조건**을 먼저 못박는다.
+`condition_aware`는 condition-action mapping 유형에서 raw-text baseline보다 높은
+Hit@k/MRR을 보일 가능성이 높다.
 
-- dense retriever가 쪼개진 액션 청크(E.1·E.2 등)를 top-k에 **모두** 끌어오면
-  H1은 성립하지 않는다. 이 경우 결과를 그대로 보고한다.
-- hierarchical의 우위가 **평균 청크 크기 차이만으로 설명**되면(큰 청크가
-  containment Hit@k에 자명하게 유리) 구조 효과는 미입증으로 본다.
-  → 그래서 모든 검색 결과에 **평균 청크 크기·개수를 병기**한다.
+### H2 — failure mode
 
-## 4. 실험 설계 원칙
+청킹 효과는 모든 실패를 해결하지 않는다. 특히 다음 실패는 청킹만으로 해결되지
+않을 수 있다.
 
-### 4.1 단일 독립변수
+- 질문 자체가 문서에 없음(unanswerable)
+- answer synthesis 단계의 수치/조건 오독
+- Vol.1 specification만으로 rationale을 요구하는 질문
+- retriever가 관련 chunk를 찾았지만 generator가 connector 논리를 잘못 해석하는 경우
 
-청킹 전략만 변수. 임베딩·generator·judge·retrieval 방식·QA 언어는 전부 고정.
-이것이 이 논문의 내적 타당성의 핵심이다. 어떤 확장 유혹(retriever 비교,
-2단계 검색, reranker 등)도 이 원칙을 깨면 배제한다.
+### H3 — semantic chunking의 한계
 
-### 4.2 4개 전략
+semantic chunking은 도메인 무관 의미 경계를 고르므로 문장상 자연스러운 경계와
+규제 논리상 필요한 경계가 어긋날 수 있다.
 
-naive_fixed_length / sliding_window / semantic / hierarchical(제안).
-앞 셋은 도메인 무관 baseline, 넷째만 STS 구조를 활용.
+---
 
-- 비교군(앞 셋)의 입력: `actions_text`(연속 줄글)
-- 제안(hierarchical)의 입력: `condition_blocks`(구조) → condition–action 청크
-- hierarchical은 **dense 단일 단계**. flat 청크에 section path만 prepend.
-  summary node·2단계 검색은 **쓰지 않는다**(단일 변수 원칙 위반이므로).
+## 4. 전략 정의
 
-### 4.3 semantic 파라미터 고정
+본 실험의 구현상 전략은 5개다. 단, 논문에서의 주 비교축은 **raw-text baseline 3개
+대 condition-aware structure chunking**이다. `action_logic`은 주 전략이 아니라 구조
+단위 ablation이다.
 
-breakpoint percentile은 **사전에 하나로 고정**(문헌 표준값, 예: p95).
-결과를 보고 우리에게 유리한 값을 고르는 것은 금지. (파일럿에서 임계값을
-바꾸면 최소 한 조건은 항상 쪼개진다는 점은 확인됨 — INFO §7 참조.)
+| 전략 | 분류 | 설명 | 입력 |
+|------|------|------|------|
+| `naive_fixed_length` | baseline | 고정 길이 분할 | `raw.jsonl` |
+| `sliding_window` | baseline | 고정 길이 + overlap | `raw.jsonl` |
+| `semantic` | baseline | embedding 기반 word-boundary coherence | `raw.jsonl` |
+| `action_logic` | ablation | Required Action 단위 구조 청크 | `hierarchical_source.jsonl` |
+| `condition_aware` | proposed | Condition 단위 구조 청크 | `condition_chunks.jsonl` |
 
-### 4.4 평가
+`condition_aware`는 Condition 하나에 해당 Condition text, Required Actions,
+Completion Times, AND/OR connector를 함께 넣는다. 현재 논문의 제안 전략은 이것이다.
 
-- **Retrieval**: Hit@k(k=1,3,5), MRR. gold = flat chunk id 집합에 대한
-  **containment**. 보조로 IoU. 청크 크기·개수 병기.
-- **Generation**: LLM-as-judge — accuracy(정답 일치), groundedness(회수된
-  청크로 뒷받침되는가).
-- gold를 chunk id 집합으로 잡는 이유: 전략마다 청크 경계가 달라 PDF 좌표로는
-  전략 간 비교가 불가능. chunk id containment는 전략 독립적으로 유효.
+`action_logic`은 개별 Required Action을 하나의 chunk로 만들고 주변 connector 정보를
+metadata/body에 포함한다. exact action retrieval에는 유리할 수 있으나, condition-level
+질문에서는 여러 action chunk를 동시에 회수해야 하므로 주 전략으로 삼지 않는다.
 
-### 4.5 QA 데이터셋
+---
 
-- 규모: 60~62문항. 통계 검정은 aggregate ~44문항 기준.
-- 5종(자연 분포 유지 — 특정 방법에 유리한 유형으로 편향 금지):
-  extractive ~22 / condition_action_mapping ~22 / definition ~6 /
-  rationale(Vol.2) ~6 / unanswerable ~6.
-- **type별 breakdown 보고**로 AND/OR 우위가 aggregate를 부풀리지 않고도
-  드러나게 한다.
-- 생성은 LLM, **gold 청크 매핑·unanswerable 판정은 사람 검증**.
-  (생성 모델이 정답 청크를 보고 질문을 만들면 표현이 겹쳐 검색이 쉬워지는
-  편향이 생기므로, 매핑 검증은 생략 불가.)
-- QA 언어: **영어**(원문 매칭·containment 태깅에 유리). 논문 본문은 한국어.
+## 5. 단일 변수 원칙
 
-## 5. 코퍼스 전략
+고정할 것:
 
-- Primary: NUREG-1431 Vol.1 (STS, Westinghouse). Vol.2(Bases)는 rationale
-  QA용으로 후순위.
-- 인덱싱은 3.4(RCS) **전체** — distractor 확보. "LCO 3.4.1 vs 3.4.2" 같은
-  식별자 혼동을 검색이 견디는지 보려면 유사 조항이 인덱스에 많아야 한다.
-- QA gold 추출 대상은 그 부분집합. 선택 섹션이 condition 구조 복잡도
-  (단순 조건 ~ AND/OR 중첩 조건)의 스펙트럼을 커버하도록 한다(리뷰 방어).
+- embedding model
+- retrieval method: dense only
+- query language: English
+- indexed text field: `content.body`
+- evaluation metric: Hit@k, MRR
 
-## 6. 도메인 문서 특성 (파싱이 어려운 이유)
+변수:
 
-- ACTIONS 표는 **ruling line이 없는** 다단 레이아웃(whitespace 정렬).
-  → `extract_tables()`는 0개 검출, `extract_text()`는 컬럼을 섞어버림.
-  → `extract_words()` + x0 좌표 밴드 파싱으로 컬럼을 직접 가른다.
-- AND/OR connector는 **원문 텍스트가 authoritative**. 라벨 group 번호로
-  추론하면 틀린다(C.2·E.2가 group이 바뀌어도 OR인 반례 존재).
-- optional 조치는 원문 대괄호 `[ ]`로 표기(플랜별 선택 조항). 파서가 이를
-  잡되, 실제 대괄호와 파싱 아티팩트를 구분해야 한다(원문 대조로 검증).
-- 한 페이지에 ACTIONS 표와 SURVEILLANCE REQUIREMENTS 표가 이어지면 경계가
-  안 끊겨 오염될 수 있다(3.4.15 Condition G에서 확인·수정됨).
+- chunking strategy only
 
-## 7. 파일럿 결과 (기록)
+배제할 것:
 
-`scripts/pilot_semantic_vs_structure.py` — 3.4.15 하나로 "semantic이
-condition 내부 AND/OR 짝을 경계로 가르는가"만 확인한 **1회성 sanity check**.
+- lexical/hybrid retriever 비교
+- reranker
+- 2-stage retrieval
+- summary node
+- model fine-tuning
 
-- 관찰: breakpoint를 p75/p90/p95로 바꿔도 최소 한 조건(D)은 **항상** 쪼개짐.
-  p95에서 E가 우연히 안 갈린 건 문서가 거의 안 잘린 상태(청크 3개)였기 때문.
-- **한계(중요)**: 이 파일럿은 청크 **경계**만 봤고 **검색 지표를 재지
-  않았다**. 즉 "경계가 쪼개진다"(가설의 전제)를 확인했을 뿐, "검색이
-  나빠진다"(H1 자체)를 입증하지 못한다. 또한 hierarchical 쪽 100% 보존은
-  정의상 자명(경계 = condition)하므로 발견이 아니다.
-- **위치**: 이 결과는 논문의 Results가 아니라 **방법론/논의의 메커니즘
-  삽화**로만 쓴다. H1은 실제 retrieval 실험으로 검증해야 한다.
+이유: 위 요소를 넣으면 결과가 chunking 효과인지 retriever/model 효과인지 분리하기 어렵다.
 
-## 8. 스코프 밖 (명시적 배제)
+---
 
-혼동·확장을 막기 위해 **하지 않을 것**을 못박는다.
+## 6. semantic chunking 구현 해석
 
-- retriever 비교(lexical/hybrid/dense)는 **별도 프로젝트**. 이 논문에 통합 금지.
-- 2단계 검색·summary node·reranker — 단일 변수 원칙 위반.
-- 대규모 파인튜닝 — HW 제약(RTX 3060 12GB).
-- Vol.2 Bases 전면 활용 — rationale QA 소수만, 후순위.
-- 파일럿 결과를 H1 입증으로 사용 — §7 참조.
+현재 semantic 전략은 자유롭게 임의 길이로 자르는 방식이 아니다. 사전에 정한 size
+budget 안에서 word-boundary candidate를 만들고, 좌우 context embedding coherence가 낮은
+경계를 선택한다.
 
-## 9. 참고 문헌 맥락
+고정 파라미터:
 
-- **Byun & Kim (KNS 2026 봄, KAERI)**: 원자력 RAG 파이프라인 논문이나
-  청킹에 초점 없음 → 본 연구의 gap을 설정(직접 비판 아님).
-- **MultiDocFusion (EMNLP 2025)**: hierarchical 전략의 개념적 영감.
-  단 NUREG-1431은 born-digital의 명시적 구조를 가지므로 그 논문의 무거운
-  vision/fine-tuning 스택은 불필요.
+- `min_chars`
+- `target_chars`
+- `max_chars`
+- `context_window_words`
+- `boundary_step_words`
+- embedding model
 
-> 위 논문의 구체적 선택(모델·하이퍼파라미터 등)은 **참고일 뿐 본 프로젝트의
-> 확정 사항이 아니다**. 확정 사항은 이 문서 §1–§8이다.
+따라서 논문에는 다음처럼 기술하는 것이 안전하다.
 
-## 10. 논문 구조 (목표)
+> Semantic chunking selected embedding-based word boundaries under a predefined
+> chunk-size budget, without using the regulatory Condition–Action structure.
 
-서론 → 관련연구 → 방법론(도메인 특성·4전략·평가) → 실험(코퍼스·QA·설정)
-→ 결과(type별 breakdown·청크 크기 병기) → 결론. 분량 1~5p, 명확한 결론 하나.
+semantic 결과가 사람이 보기엔 condition 문장을 중간에서 자르더라도, 알고리즘 결과라면
+수동 보정하지 않는다. 그것이 baseline의 관찰 결과다.
+
+---
+
+## 7. 코퍼스와 산출물
+
+Primary corpus:
+
+- NUREG-1431 Vol.1, RCS 3.4.x 계열
+- Vol.2 Bases는 rationale QA용 후속 단계
+
+현재 processed corpus:
+
+| 파일 | 의미 | downstream |
+|------|------|------------|
+| `raw.jsonl` | LCO section-level flattened text | fixed/sliding/semantic |
+| `hierarchical_source.jsonl` | action-level structured source | action_logic / gold evidence basis |
+| `condition_chunks.jsonl` | condition-level structured source | condition_aware |
+
+주의: raw-text baseline과 structure-aware 전략은 같은 PDF extraction root에서 출발하지만,
+입력 표현은 다르다. 따라서 논문 표현은 다음처럼 잡는다.
+
+> We compare common raw-text chunking baselines with a structure-aware hierarchical
+> chunk construction strategy.
+
+피해야 할 표현:
+
+> identical preprocessing with only split boundary changed
+
+이 표현은 부정확하다.
+
+---
+
+## 8. Retrieval 평가 설계
+
+Retrieval metric:
+
+- Hit@1 / Hit@3 / Hit@5
+- MRR
+- type별 breakdown
+- chunk count / average chunk length 병기
+
+Gold evidence:
+
+- 기본 단위는 `hierarchical_source.jsonl`의 action-level evidence id
+- 예: `3.4.5/C.1`, `3.4.5/C.2`, `3.4.5/LCO`
+
+`metadata.evidence_ids`는 retrieval input이 아니다. embedding/indexing 대상은 항상
+`content.body`뿐이다. 따라서 evidence id 문제는 검색 노이즈 문제가 아니라 evaluation
+label mapping 문제다.
+
+---
+
+## 9. QA 데이터셋 원칙
+
+목표 규모:
+
+- 약 60문항
+- extractive: 약 22
+- condition-action mapping: 약 22
+- definition: 약 6
+- rationale: 약 6
+- unanswerable: 약 6
+
+통계적 비교의 중심은 extractive + condition-action mapping이다. rationale과 unanswerable은
+RAG 실패 유형 분석 및 논의용 성격이 강하다.
+
+QA 작성 원칙:
+
+- 질문은 영어
+- gold evidence mapping은 사람 검증
+- 자동 생성 QA는 pipeline smoke test에는 사용할 수 있으나 최종 실험 결과에는 사용하지 않음
+- final dataset에서는 특정 전략에 유리한 표현 반복을 피함
+
+---
+
+## 10. Generation / Judge 계획
+
+현재 구현은 retrieval evaluation과 RAG prompt 입력 생성까지다. 실제 generator 호출과
+LLM-as-judge는 후속 단계다.
+
+Generation 평가 항목:
+
+- answer correctness
+- groundedness
+- hallucination / unsupported answer
+- connector logic preservation
+
+Judge는 같은 prompt/template을 모든 전략에 적용한다. retrieval context만 전략별로 달라진다.
+
+---
+
+## 11. 실패 taxonomy
+
+논문 결과는 단순 평균 점수만 보고하지 않는다. 다음 failure type별로 분석한다.
+
+| Failure type | chunking으로 완화 가능성 |
+|--------------|--------------------------|
+| condition/action split | 높음 |
+| completion time/action mismatch | 높음, 구조 보존 시 |
+| AND/OR connector omission | 중간~높음 |
+| cross-row dependency | 중간 |
+| number/operator mismatch | 낮음, generation 문제 가능 |
+| rationale unavailable in Vol.1 | 낮음 |
+| unanswerable question | 낮음 |
+
+핵심 결론은 "condition_aware가 모든 것을 해결한다"가 아니라, **청킹으로 해결 가능한
+실패와 그렇지 않은 실패를 분리하는 것**이다.
+
+---
+
+## 12. 현재 pipeline 상태
+
+구현 완료:
+
+```text
+corpus → chunks → index → retrieve → rag_inputs → eval
+```
+
+QA 없이 실행 가능한 단계:
+
+```text
+corpus → chunks → index
+```
+
+QA가 필요한 단계:
+
+```text
+retrieve → rag_inputs → eval
+```
+
+따라서 `data/qa/qa.jsonl`이 없으면 `retrieve.py`와 `run_pipeline.py --to-stage eval`은
+정상적으로 실패한다. 이것은 코드 오류가 아니라 입력 데이터 부재다.
+
+---
+
+## 13. 스코프 밖
+
+- retriever 비교 실험
+- BM25/hybrid/reranker 추가
+- Graph RAG
+- fine-tuning
+- Vol.2 Bases 전면 통합
+- QA 자동 생성 결과를 최종 metric으로 사용
+- semantic boundary를 사람이 수동 보정
+
+---
+
+## 14. 논문 구조 목표
+
+1. Introduction
+2. Related Work
+3. Corpus and Document Structure
+4. Chunking Strategies
+5. Experimental Setup
+6. Retrieval Results
+7. Failure Analysis
+8. Discussion and Limitations
+9. Conclusion
+
+분량이 1~5p이면 Results와 Failure Analysis를 합치고, Generation 평가는 retrieval 결과가
+정리된 뒤 선택적으로 축소한다.
