@@ -47,11 +47,12 @@ with parse_mod.pdfplumber.open(pdf_path) as pdf:
 
 sections = assemble_sections(pages_data)
 
-hier_records, flat_records = [], []
+hier_records, flat_records, condition_records = [], [], []
 for s in sections:
-    h, f = build_records(s)
+    h, f, c = build_records(s)
     hier_records.append(h)
     flat_records.extend(f)
+    condition_records.extend(c)
 
 with (out_dir / "raw.jsonl").open("w", encoding="utf-8") as fh:
     for r in hier_records:
@@ -62,9 +63,14 @@ with (out_dir / "hierarchical_source.jsonl").open("w", encoding="utf-8") as fh:
     for r in flat_records:
         fh.write(json.dumps(r, ensure_ascii=False) + "\n")
 
+with (out_dir / "condition_chunks.jsonl").open("w", encoding="utf-8") as fh:
+    for r in condition_records:
+        fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+
 print(f"empty pages: {skipped or 'none'}")
 print(f"sections: {len(hier_records)}")
 print(f"flat chunks: {len(flat_records)}")
+print(f"condition chunks: {len(condition_records)}")
 for h in hier_records:
     letters = [cb["label"] for cb in h["content"]["condition_blocks"]]
     expected = [chr(ord("A") + i) for i in range(len(letters))]
