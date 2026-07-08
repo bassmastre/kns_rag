@@ -79,8 +79,8 @@ chunking:
       min_chars: 450
       target_chars: 900
       max_chars: 1200
-      similarity_percentile: 20
-      similarity_threshold: null
+      context_window_words: 45
+      boundary_step_words: 3
       batch_size: 32
 
 embedding_model:
