@@ -7,6 +7,7 @@ source_doc: "NUREG-1431 Vol.1"
 paths:
   raw_dir: data/raw
   processed_dir: data/processed
+  chunks_dir: data/chunks
   qa_dir: data/qa
   output_dir: outputs
 
@@ -63,8 +64,17 @@ chunking:
     - naive_fixed_length
     - sliding_window
     - semantic
-    - hierarchical
-  # 전략별 파라미터는 각 전략 스켈레톤에서 정의
+    - action_logic
+    - condition_aware
+  params:
+    naive_fixed_length:
+      chunk_size: 900
+    sliding_window:
+      chunk_size: 900
+      overlap: 200
+    semantic:
+      target_chars: 900
+      max_chars: 1200
 
 embedding_model:
   provider: null  # TODO: 미확정
