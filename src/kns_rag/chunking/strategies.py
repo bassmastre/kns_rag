@@ -26,8 +26,6 @@ STRATEGY_INPUTS = {
     "semantic": RAW_INPUT,
     "action_logic": ACTION_SOURCE_INPUT,
     "condition_aware": CONDITION_CHUNKS_INPUT,
-    # Backward-compatible alias from the early config skeleton.
-    "hierarchical": CONDITION_CHUNKS_INPUT,
 }
 
 
@@ -45,7 +43,6 @@ DEFAULT_PARAMS = {
     },
     "action_logic": {},
     "condition_aware": {},
-    "hierarchical": {},
 }
 
 
@@ -496,20 +493,10 @@ def condition_aware(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return chunks
 
 
-def hierarchical(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Backward-compatible alias for condition_aware."""
-    aliased = condition_aware(records)
-    for chunk in aliased:
-        chunk["strategy"] = "hierarchical"
-        chunk["id"] = chunk["id"].replace("condition_aware::", "hierarchical::", 1)
-    return aliased
-
-
 STRATEGIES = {
     "naive_fixed_length": naive_fixed_length,
     "sliding_window": sliding_window,
     "semantic": semantic,
     "action_logic": action_logic,
     "condition_aware": condition_aware,
-    "hierarchical": hierarchical,
 }
