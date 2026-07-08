@@ -10,10 +10,103 @@ def col_of(w: dict, col1_max: int, col2_max: int) -> str:
     return "TIME"
 
 
+def _center_y(w: dict) -> float:
+    return (w["top"] + w["bottom"]) / 2
+
+
+def _height(w: dict) -> float:
+    return max(1.0, w["bottom"] - w["top"])
+
+
+def _same_visual_row(row: list[dict], w: dict) -> bool:
+    row_top = min(x["top"] for x in row)
+    row_bottom = max(x["bottom"] for x in row)
+    row_center = (row_top + row_bottom) / 2
+    row_height = max(1.0, row_bottom - row_top)
+
+    return abs(_center_y(w) - row_center) <= row_height * 0.7
+
+
+def _is_subscript(prev: dict, cur: dict) -> bool:
+    """좌표 기반 아래첨자 판단."""
+    prev_text = str(prev.get("text", ""))
+    cur_text = str(cur.get("text", ""))
+
+    if not prev_text or not cur_text:
+        return False
+
+    # 너무 긴 일반 단어를 붙이지 않기 위한 최소 안전장치.
+    if len(cur_text) > 5:
+        return False
+
+    prev_x1 = prev.get("x1", prev.get("x0", 0.0))
+    cur_x0 = cur.get("x0", 0.0)
+    x_gap = cur_x0 - prev_x1
+
+    # 아래첨자는 앞 기호 바로 오른쪽에 붙어 있음.
+    if x_gap < -1.0 or x_gap > 4.0:
+        return False
+
+    prev_h = _height(prev)
+    cur_h = _height(cur)
+
+    # 아래첨자는 보통 앞 토큰보다 작거나 비슷함.
+    if cur_h > prev_h * 1.15:
+        return False
+
+    # 아래첨자는 앞 토큰보다 중심 y가 아래에 있음.
+    if _center_y(cur) <= _center_y(prev) + prev_h * 0.10:
+        return False
+
+    # 앞 토큰은 보통 T, P, T1 같은 짧은 기호여야 함.
+    # 이 조건은 문자열 '종류'가 아니라 일반 문장 단어 오결합 방지용.
+    if len(prev_text) > 3:
+        return False
+
+    return True
+
+
 def join_words(ws: list[dict]) -> str:
-    """Join words in visual reading order."""
-    ws = sorted(ws, key=lambda w: (round(w["top"]), w["x0"]))
-    return " ".join(w["text"] for w in ws)
+    """Join words in visual reading order.
+
+    pdfplumber에서 아래첨자/위첨자는 top 좌표가 달라져 순서가 밀릴 수 있다.
+    먼저 visual row로 묶고, row 내부 x0 순서로 정렬한 뒤,
+    좌표상 아래첨자인 토큰은 앞 토큰에 `_`로 붙인다.
+    """
+    if not ws:
+        return ""
+
+    rows: list[list[dict]] = []
+
+    for w in sorted(ws, key=lambda x: (x["top"], x["x0"])):
+        for row in rows:
+            if _same_visual_row(row, w):
+                row.append(w)
+                break
+        else:
+            rows.append([w])
+
+    rows.sort(key=lambda row: min(w["top"] for w in row))
+
+    lines: list[str] = []
+
+    for row in rows:
+        parts: list[str] = []
+        prev_word: dict | None = None
+
+        for w in sorted(row, key=lambda x: x["x0"]):
+            text = str(w["text"])
+
+            if prev_word is not None and parts and _is_subscript(prev_word, w):
+                parts[-1] += "_" + text
+            else:
+                parts.append(text)
+
+            prev_word = w
+
+        lines.append(" ".join(parts))
+
+    return " ".join(lines)
 
 
 def build_bands(anchor_tops: list[float], bottom: float) -> list[tuple]:
