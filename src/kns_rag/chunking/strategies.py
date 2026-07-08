@@ -13,7 +13,7 @@ from functools import lru_cache
 from typing import Any
 
 RE_ACTION_LABEL = re.compile(r"\b([A-Z]\.\d+(?:\.\d+)?)\b")
-RE_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+RE_WORD = re.compile(r"\S+")
 
 RAW_INPUT = "raw"
 ACTION_SOURCE_INPUT = "hierarchical_source"
@@ -39,8 +39,8 @@ DEFAULT_PARAMS = {
         "min_chars": 450,
         "target_chars": 900,
         "max_chars": 1200,
-        "similarity_percentile": 20,
-        "similarity_threshold": None,
+        "context_window_words": 45,
+        "boundary_step_words": 3,
         "batch_size": 32,
     },
     "action_logic": {},
@@ -189,33 +189,6 @@ def sliding_window(
     return chunks
 
 
-def _split_sentences_with_spans(text: str) -> list[tuple[str, int, int]]:
-    """Split text into sentence-like units and keep char spans.
-
-    PDF-extracted regulatory text is not perfectly punctuated. This function uses
-    punctuation boundaries when available and falls back to one unit for the whole
-    text if no boundary is detected.
-    """
-    spans: list[tuple[str, int, int]] = []
-    start = 0
-    for part in RE_SENTENCE_BOUNDARY.split(text):
-        sent = part.strip()
-        if not sent:
-            start += len(part)
-            continue
-        pos = text.find(sent, start)
-        if pos < 0:
-            pos = start
-        end = pos + len(sent)
-        spans.append((sent, pos, end))
-        start = end
-    if not spans and text.strip():
-        stripped = text.strip()
-        pos = text.find(stripped)
-        spans.append((stripped, pos, pos + len(stripped)))
-    return spans
-
-
 @lru_cache(maxsize=4)
 def _load_sentence_transformer(model_name: str):
     try:
@@ -226,6 +199,10 @@ def _load_sentence_transformer(model_name: str):
             "Install it or build non-semantic strategies only."
         ) from exc
     return SentenceTransformer(model_name)
+
+
+def _word_spans(text: str) -> list[tuple[str, int, int]]:
+    return [(m.group(0), m.start(), m.end()) for m in RE_WORD.finditer(text)]
 
 
 def _cosine_similarities(embeddings: Any) -> list[float]:
@@ -243,63 +220,153 @@ def _cosine_similarities(embeddings: Any) -> list[float]:
     return [float((arr[i] * arr[i + 1]).sum()) for i in range(len(arr) - 1)]
 
 
-def _semantic_cut_threshold(
-    similarities: list[float],
+def _semantic_boundary_candidates(
+    text: str,
+    words: list[tuple[str, int, int]],
     *,
-    similarity_percentile: float,
-    similarity_threshold: float | None,
-) -> float | None:
-    if not similarities:
-        return None
-    if similarity_threshold is not None:
-        return float(similarity_threshold)
-    try:
-        import numpy as np
-    except ImportError as exc:
-        raise ImportError("semantic chunking requires numpy") from exc
-    return float(np.percentile(similarities, similarity_percentile))
+    context_window_words: int,
+    boundary_step_words: int,
+) -> tuple[list[int], list[str]]:
+    """Build embedding contexts around candidate word boundaries.
+
+    A boundary index i means a cut before words[i]. This function does not use
+    sentence punctuation, list markers, condition labels, or parsed structure.
+    It only proposes word-boundary positions and lets embeddings score semantic
+    coherence across the boundary.
+    """
+    if context_window_words <= 0:
+        raise ValueError("context_window_words must be positive")
+    if boundary_step_words <= 0:
+        raise ValueError("boundary_step_words must be positive")
+
+    n = len(words)
+    if n < 2:
+        return [], []
+
+    boundary_indices = list(range(1, n, boundary_step_words))
+    if boundary_indices[-1] != n - 1:
+        boundary_indices.append(n - 1)
+
+    contexts = []
+    for idx in boundary_indices:
+        left_start_idx = max(0, idx - context_window_words)
+        left_end_idx = idx - 1
+        right_start_idx = idx
+        right_end_idx = min(n - 1, idx + context_window_words - 1)
+
+        left_start = words[left_start_idx][1]
+        left_end = words[left_end_idx][2]
+        right_start = words[right_start_idx][1]
+        right_end = words[right_end_idx][2]
+
+        contexts.append(text[left_start:left_end])
+        contexts.append(text[right_start:right_end])
+
+    return boundary_indices, contexts
 
 
-def _build_semantic_spans(
-    units: list[tuple[str, int, int]],
-    similarities: list[float],
+def _semantic_boundary_scores(
+    text: str,
+    words: list[tuple[str, int, int]],
+    model: Any,
+    *,
+    context_window_words: int,
+    boundary_step_words: int,
+    batch_size: int,
+) -> dict[int, float]:
+    boundary_indices, contexts = _semantic_boundary_candidates(
+        text,
+        words,
+        context_window_words=context_window_words,
+        boundary_step_words=boundary_step_words,
+    )
+    if not boundary_indices:
+        return {}
+
+    embeddings = model.encode(
+        contexts,
+        batch_size=batch_size,
+        convert_to_numpy=True,
+        normalize_embeddings=False,
+        show_progress_bar=False,
+    )
+    pair_scores = _cosine_similarities(embeddings)
+
+    # _cosine_similarities computes all adjacent pairs. We only need pairs
+    # (0,1), (2,3), ... because contexts are [left0, right0, left1, right1, ...].
+    scores = {}
+    for i, boundary_idx in enumerate(boundary_indices):
+        score_idx = i * 2
+        if score_idx < len(pair_scores):
+            scores[boundary_idx] = pair_scores[score_idx]
+    return scores
+
+
+def _first_boundary_after_char(
+    words: list[tuple[str, int, int]],
+    start_word_idx: int,
+    char_limit: int,
+) -> int:
+    for idx in range(start_word_idx + 1, len(words)):
+        if words[idx][1] >= char_limit:
+            return idx
+    return len(words)
+
+
+def _build_semantic_spans_from_scores(
+    words: list[tuple[str, int, int]],
+    boundary_scores: dict[int, float],
     *,
     min_chars: int,
     target_chars: int,
     max_chars: int,
-    threshold: float | None,
-) -> list[tuple[int, int, int, int, list[float]]]:
-    """Return chunk spans from sentence units using adjacent similarity drops.
+) -> list[tuple[int, int, int, int, float | None]]:
+    """Build chunk spans by choosing the weakest semantic boundary.
 
-    Output tuple:
-    (unit_start_idx, unit_end_exclusive, char_start, char_end, boundary_scores_inside)
+    For each chunk, search candidate word boundaries in the valid range. Prefer
+    boundaries after target_chars; choose the boundary with the lowest left/right
+    context similarity. If there is no scored candidate, fall back to the nearest
+    whitespace boundary around max_chars.
     """
-    if not units:
-        return []
-
     spans = []
-    start_unit = 0
-    start_char = units[0][1]
-    internal_scores: list[float] = []
+    n = len(words)
+    if n == 0:
+        return spans
 
-    for i in range(len(units) - 1):
-        current_end = units[i][2]
-        current_len = current_end - start_char
-        sim = similarities[i]
-        internal_scores.append(sim)
+    start_word = 0
+    while start_word < n:
+        start_char = words[start_word][1]
+        remaining_end = words[-1][2]
+        if remaining_end - start_char <= max_chars:
+            spans.append((start_word, n, start_char, remaining_end, None))
+            break
 
-        low_similarity = threshold is not None and sim <= threshold
-        reached_target = current_len >= target_chars
-        reached_max = units[i + 1][2] - start_char > max_chars
-        can_cut = current_len >= min_chars
+        min_abs = start_char + min_chars
+        target_abs = start_char + target_chars
+        max_abs = start_char + max_chars
 
-        if reached_max or (can_cut and low_similarity and reached_target):
-            spans.append((start_unit, i + 1, start_char, current_end, internal_scores[:-1]))
-            start_unit = i + 1
-            start_char = units[start_unit][1]
-            internal_scores = []
+        valid = [
+            idx
+            for idx in boundary_scores
+            if idx > start_word and min_abs <= words[idx][1] <= max_abs
+        ]
+        preferred = [idx for idx in valid if words[idx][1] >= target_abs]
+        pool = preferred or valid
 
-    spans.append((start_unit, len(units), start_char, units[-1][2], internal_scores))
+        if pool:
+            cut_word = min(pool, key=lambda idx: boundary_scores[idx])
+            cut_score = boundary_scores[cut_word]
+        else:
+            cut_word = _first_boundary_after_char(words, start_word, max_abs)
+            cut_score = None
+
+        if cut_word <= start_word:
+            cut_word = min(start_word + 1, n)
+
+        end_char = words[cut_word - 1][2]
+        spans.append((start_word, cut_word, start_char, end_char, cut_score))
+        start_word = cut_word
+
     return spans
 
 
@@ -310,20 +377,17 @@ def semantic(
     min_chars: int = 450,
     target_chars: int = 900,
     max_chars: int = 1200,
-    similarity_percentile: float = 20,
-    similarity_threshold: float | None = None,
+    context_window_words: int = 45,
+    boundary_step_words: int = 3,
     batch_size: int = 32,
 ) -> list[dict[str, Any]]:
     """Embedding-based semantic boundary chunking.
 
-    Algorithm:
-    1. Split each raw LCO text into sentence-like units.
-    2. Embed units with SentenceTransformer.
-    3. Compute adjacent-unit cosine similarities.
-    4. Cut at low-similarity boundaries, while respecting min/target/max chars.
-
-    This is still a baseline: it uses semantic similarity only, not regulatory
-    condition/action structure.
+    This implementation does not split by sentence punctuation. It scores word
+    boundary candidates by embedding the left and right local contexts around
+    each boundary and selecting the lowest-coherence boundary within length
+    constraints. It is therefore semantic-similarity based, while still not using
+    regulatory condition/action parser output.
     """
     if not model_name:
         raise ValueError(
@@ -334,8 +398,6 @@ def semantic(
         raise ValueError("min_chars, target_chars, and max_chars must be positive")
     if min_chars > target_chars or target_chars > max_chars:
         raise ValueError("expected min_chars <= target_chars <= max_chars")
-    if not (0 <= similarity_percentile <= 100):
-        raise ValueError("similarity_percentile must be between 0 and 100")
 
     model = _load_sentence_transformer(model_name)
     chunks = []
@@ -346,47 +408,42 @@ def semantic(
             continue
         base = _base_metadata(record)
         lco = base.get("lco")
-        units = _split_sentences_with_spans(text)
-        if not units:
+        words = _word_spans(text)
+        if not words:
             continue
 
-        unit_texts = [u[0] for u in units]
-        embeddings = model.encode(
-            unit_texts,
+        boundary_scores = _semantic_boundary_scores(
+            text,
+            words,
+            model,
+            context_window_words=context_window_words,
+            boundary_step_words=boundary_step_words,
             batch_size=batch_size,
-            convert_to_numpy=True,
-            normalize_embeddings=False,
-            show_progress_bar=False,
         )
-        similarities = _cosine_similarities(embeddings)
-        threshold = _semantic_cut_threshold(
-            similarities,
-            similarity_percentile=similarity_percentile,
-            similarity_threshold=similarity_threshold,
-        )
-        spans = _build_semantic_spans(
-            units,
-            similarities,
+        spans = _build_semantic_spans_from_scores(
+            words,
+            boundary_scores,
             min_chars=min_chars,
             target_chars=target_chars,
             max_chars=max_chars,
-            threshold=threshold,
         )
 
-        for idx, (unit_start, unit_end, start, end, scores) in enumerate(spans, 1):
+        for idx, (word_start, word_end, start, end, cut_score) in enumerate(spans, 1):
             body = text[start:end].strip()
             metadata = {
                 **base,
                 "parent_id": record.get("id"),
                 "chunk_type": "semantic_embedding_boundary",
+                "semantic_method": "word_boundary_context_coherence",
                 "chunk_index": idx,
                 "char_start": start,
                 "char_end": end,
-                "unit_start": unit_start,
-                "unit_end": unit_end,
+                "word_start": word_start,
+                "word_end": word_end,
                 "embedding_model": model_name,
-                "similarity_threshold": threshold,
-                "mean_internal_similarity": (sum(scores) / len(scores)) if scores else None,
+                "selected_boundary_similarity": cut_score,
+                "context_window_words": context_window_words,
+                "boundary_step_words": boundary_step_words,
                 "evidence_ids": _evidence_ids_from_text(lco, body),
             }
             chunks.append(
