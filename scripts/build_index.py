@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
 
 from kns_rag.io import load_jsonl, resolve_path
 from kns_rag.retrieval import build_embeddings_for_chunks, save_index
