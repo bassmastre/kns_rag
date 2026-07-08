@@ -37,12 +37,13 @@ metadata이며 임베딩 대상은 항상 `content.body`뿐이다.
 - 5개 청킹 전략 생성(`build_chunks.py`)
 - dense index 생성(`build_index.py`)
 - retrieval run 생성(`retrieve.py`)
+- RAG prompt 입력 생성(`build_rag_inputs.py`)
 - retrieval metric 평가(`eval_retrieval.py`)
 - end-to-end runner(`run_pipeline.py`)
 
 **미완**
 - QA 데이터셋 작성
-- Generation / LLM-as-judge 평가
+- 실제 Generator 호출 / LLM-as-judge 채점
 - Vol.2 Bases 통합
 
 ---
@@ -76,6 +77,7 @@ outputs/indexes/<strategy>/chunks.jsonl
 outputs/indexes/<strategy>/embeddings.npy
 outputs/indexes/<strategy>/meta.json
 outputs/retrieval/runs.jsonl
+outputs/generation/rag_inputs.jsonl
 outputs/eval/retrieval_metrics.json
 ```
 
@@ -103,7 +105,7 @@ outputs/eval/retrieval_metrics.json
 pip install pdfplumber pyyaml numpy sentence-transformers
 ```
 
-전체 파이프라인:
+전체 retrieval 파이프라인:
 
 ```bash
 python scripts/run_pipeline.py --config config.yaml --from-stage corpus --to-stage eval
@@ -122,6 +124,7 @@ python scripts/build_corpus.py --config config.yaml
 python scripts/build_chunks.py --config config.yaml --strategy all
 python scripts/build_index.py --config config.yaml --strategy all
 python scripts/retrieve.py --config config.yaml --strategy all --qa-file data/qa/qa.jsonl
+python scripts/build_rag_inputs.py --config config.yaml
 python scripts/eval_retrieval.py --config config.yaml --qa-file data/qa/qa.jsonl
 ```
 
@@ -166,6 +169,7 @@ scripts/
   build_chunks.py
   build_index.py
   retrieve.py
+  build_rag_inputs.py
   eval_retrieval.py
   run_pipeline.py
 config.yaml
