@@ -57,6 +57,62 @@ def act_note_spans(act_sorted: list[dict]) -> list[tuple[float, float]]:
             open_top = None
     return spans
 
+
+def time_row_texts(time_words: list[dict]) -> list[str]:
+    """Return cleaned TIME-column row texts in visual order."""
+    rows: dict[int, list[dict]] = {}
+    for w in time_words:
+        rows.setdefault(round(w["top"]), []).append(w)
+    return [
+        txt
+        for top in sorted(rows)
+        if (txt := clean_text(join_words(rows[top])))
+    ]
+
+
+def is_completion_time_start(text: str) -> bool:
+    """Strong start marker for a new Completion Time cell.
+
+    Do not treat continuation rows such as 'OR In accordance with ...' as new
+    starts. They are alternatives inside the same completion-time cell.
+    """
+    return bool(
+        re.match(
+            r"^(?:Immediately|"
+            r"\d+(?:\.\d+)?\s+"
+            r"(?:second|seconds|minute|minutes|hour|hours|day|days|month|months|year|years)|"
+            r"Prior\s+to|Before|Upon|Once|Within)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def split_completion_time_blocks(time_words: list[dict]) -> list[str]:
+    """Split a condition-band TIME column into logical CT blocks.
+
+    The PDF may print a single CT cell across multiple visual rows, e.g.
+    '1 hour' followed by '[OR In accordance with ...]'. This function keeps
+    connector-prefixed rows inside the current CT block and starts a new block
+    only at a strong CT start row.
+    """
+    blocks: list[str] = []
+    current: list[str] = []
+
+    for row in time_row_texts(time_words):
+        prev = current[-1].upper() if current else None
+        starts_new = is_completion_time_start(row) and current and prev not in {"AND", "OR"}
+        if starts_new:
+            blocks.append(clean_text(" ".join(current)))
+            current = [row]
+        else:
+            current.append(row)
+
+    if current:
+        blocks.append(clean_text(" ".join(current)))
+    return [b for b in blocks if b]
+
+
 def parse_page_raw(page, cfg: dict) -> dict | None:
     """Parse one pdfplumber page into raw section fields."""
     words = page.extract_words()
@@ -115,26 +171,89 @@ def parse_page_raw(page, cfg: dict) -> dict | None:
         def in_note(top: float) -> bool:
             return any(o < top < c for o, c in note_spans)
 
-        act_anchors = []
-        for i, w in enumerate(act_sorted):
-            if in_note(w["top"]):
-                continue
-            t = w["text"]
-            if RE_ACTION_LABEL.match(t) or RE_CONNECTOR.match(t):
-                act_anchors.append(w)
-            elif (
-                t == "["
-                and i + 1 < len(act_sorted)
-                and RE_ACTION_LABEL.match(act_sorted[i + 1]["text"])
-            ):
-                act_anchors.append(act_sorted[i + 1])
-        cond_anchors = [w for w in cond_ws if RE_COND_LABEL.match(w["text"])]
+        def action_anchors_in_band(top: float, bottom: float) -> list[dict]:
+            band_act_sorted = sorted(
+                words_in_band(act_ws, top, bottom),
+                key=lambda w: (round(w["top"]), w["x0"]),
+            )
+            anchors = []
+            for i, w in enumerate(band_act_sorted):
+                if in_note(w["top"]):
+                    continue
+                t = w["text"]
+                if RE_ACTION_LABEL.match(t) or RE_CONNECTOR.match(t):
+                    anchors.append(w)
+                elif (
+                    t == "["
+                    and i + 1 < len(band_act_sorted)
+                    and RE_ACTION_LABEL.match(band_act_sorted[i + 1]["text"])
+                ):
+                    anchors.append(band_act_sorted[i + 1])
+            return anchors
 
-        for top, bottom in (
-            build_bands([w["top"] for w in cond_anchors], t_bot)
-            if cond_anchors
-            else []
-        ):
+        def parse_act_items_in_band(
+            top: float,
+            bottom: float,
+            *,
+            map_condition_ct: bool,
+        ) -> list[dict]:
+            anchors = action_anchors_in_band(top, bottom)
+            if not anchors:
+                return []
+
+            items: list[dict] = []
+            for a_top, a_bottom in build_bands([w["top"] for w in anchors], bottom):
+                bw = sorted(
+                    words_in_band(act_ws, a_top, a_bottom),
+                    key=lambda w: (round(w["top"]), w["x0"]),
+                )
+                if not bw:
+                    continue
+                first = None
+                for w in bw:
+                    cand = strip_bracket(w["text"])
+                    if cand:
+                        first = cand
+                        break
+                if first is None:
+                    continue
+
+                raw_act = join_words(words_in_band(act_ws, a_top, a_bottom))
+                raw_ct = join_words(words_in_band(time_ws, a_top, a_bottom))
+                if RE_CONNECTOR.match(first):
+                    items.append({"type": "connector", "text": first})
+                elif RE_ACTION_LABEL.match(first):
+                    cleaned = clean_text(raw_act)
+                    body = RE_STRIP_ALABEL.sub("", cleaned)
+                    items.append(
+                        {
+                            "type": "action",
+                            "label": first,
+                            "note": extract_note(body),
+                            "text": strip_note(body),
+                            "ct": clean_text(raw_ct),
+                            "optional": is_optional(raw_act),
+                            "refs": RE_SR_REF.findall(cleaned),
+                        }
+                    )
+
+            if map_condition_ct:
+                ct_blocks = split_completion_time_blocks(words_in_band(time_ws, top, bottom))
+                actions = [it for it in items if it["type"] == "action"]
+                if len(ct_blocks) == len(actions):
+                    for action, ct in zip(actions, ct_blocks, strict=False):
+                        action["ct"] = ct
+                elif len(actions) == 1 and ct_blocks:
+                    actions[0]["ct"] = clean_text(" ".join(ct_blocks))
+
+            return items
+
+        cond_anchors = [w for w in cond_ws if RE_COND_LABEL.match(w["text"])]
+        cond_band_bounds = (
+            build_bands([w["top"] for w in cond_anchors], t_bot) if cond_anchors else []
+        )
+
+        for top, bottom in cond_band_bounds:
             raw = join_words(words_in_band(cond_ws, top, bottom))
             m = re.match(r"^([A-Z])\.", raw)
             if m:
@@ -148,43 +267,15 @@ def parse_page_raw(page, cfg: dict) -> dict | None:
                     }
                 )
 
-        for top, bottom in (
-            build_bands([w["top"] for w in act_anchors], t_bot)
-            if act_anchors
-            else []
-        ):
-            bw = sorted(
-                words_in_band(act_ws, top, bottom),
-                key=lambda w: (round(w["top"]), w["x0"]),
-            )
-            if not bw:
-                continue
-            first = None
-            for w in bw:
-                cand = strip_bracket(w["text"])
-                if cand:
-                    first = cand
-                    break
-            if first is None:
-                continue
-            raw_act = join_words(words_in_band(act_ws, top, bottom))
-            raw_ct = join_words(words_in_band(time_ws, top, bottom))
-            if RE_CONNECTOR.match(first):
-                act_items_raw.append({"type": "connector", "text": first})
-            elif RE_ACTION_LABEL.match(first):
-                cleaned = clean_text(raw_act)
-                body = RE_STRIP_ALABEL.sub("", cleaned)
-                act_items_raw.append(
-                    {
-                        "type": "action",
-                        "label": first,
-                        "note": extract_note(body),
-                        "text": strip_note(body),
-                        "ct": clean_text(raw_ct),
-                        "optional": is_optional(raw_act),
-                        "refs": RE_SR_REF.findall(cleaned),
-                    }
+        if cond_band_bounds:
+            for top, bottom in cond_band_bounds:
+                act_items_raw.extend(
+                    parse_act_items_in_band(top, bottom, map_condition_ct=True)
                 )
+        else:
+            act_items_raw.extend(
+                parse_act_items_in_band(t_top, t_bot, map_condition_ct=False)
+            )
     return {
         "lco": lco,
         "title": title,
