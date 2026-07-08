@@ -1,4 +1,66 @@
+from collections import OrderedDict
+
 from .text import extract_note, parse_label, strip_note
+
+
+def _fmt_set(labels: list[str]) -> str:
+    """멤버 집합 표기 {a, b}. 집합이므로 라벨 중복은 순서 보존 dedupe."""
+    return "{" + ", ".join(dict.fromkeys(labels)) + "}"
+
+
+def _one_connector(conns: list[str]) -> str | None:
+    """connector 리스트에서 단일 값 도출(원문 값 사용, 그룹 번호로 추론하지 않음).
+
+    같은 관계 내 connector는 균일한 게 정상(예: OR 대안들). 균일하면 그 값,
+    비어 있으면 None, 드물게 섞이면 '/'로 결합해 드러낸다.
+    """
+    uniq = list(dict.fromkeys(c for c in conns if c))
+    if not uniq:
+        return None
+    return uniq[0] if len(uniq) == 1 else "/".join(uniq)
+
+
+def condition_logic(actions: list[dict]) -> dict[int, str | None]:
+    """한 condition의 액션별 2중 중첩 group logic 문구를 생성.
+
+    - group 번호(원문 파싱값)로 묶어 같은 group=intra, 다른 group=inter.
+    - connector는 원문 connector 값을 읽어서 사용(그룹 번호로 추론 금지).
+    - 자기 group을 항상 앞에 두고 서술. 형제/다른 group이 없으면 해당 절 생략,
+      둘 다 없으면(단일 액션 등) None.
+    - 반환 키는 action id(라벨 중복 오파싱에도 청크별 유일).
+    """
+    groups: "OrderedDict[object, list[dict]]" = OrderedDict()
+    for a in actions:
+        groups.setdefault(a["group"], []).append(a)
+    order = list(groups.keys())
+
+    # inter connector: 비-첫 group의 첫 멤버 connector들(그룹 경계) → 단일값
+    inter_c = _one_connector([groups[g][0]["connector"] for g in order[1:]])
+
+    out: dict[int, str | None] = {}
+    for a in actions:
+        g = a["group"]
+        members = groups[g]
+        clauses = []
+
+        siblings = [m["label"] for m in members if m is not a]
+        if siblings:
+            intra_c = _one_connector([m["connector"] for m in members[1:]])
+            sib_str = siblings[0] if len(siblings) == 1 else _fmt_set(siblings)
+            clauses.append(f"{a['label']} is joined with {sib_str} by {intra_c}")
+
+        others = [og for og in order if og != g]
+        if others:
+            own_set = _fmt_set([m["label"] for m in members])
+            other_sets = ", ".join(
+                _fmt_set([m["label"] for m in groups[og]]) for og in others
+            )
+            clauses.append(
+                f"the group {own_set} is joined with {other_sets} by {inter_c}"
+            )
+
+        out[a["id"]] = ("Logic: " + "; ".join(clauses) + ".") if clauses else None
+    return out
 
 
 def assemble_sections(pages: list[dict]) -> list[dict]:
@@ -143,6 +205,7 @@ def build_records(section: dict) -> tuple[dict, list[dict]]:
 
     flats = []
     for cb in condition_blocks:
+        logic_map = condition_logic(cb["actions"])
         for a in cb["actions"]:
             ref_str = (" " + " ".join(f"See {r}." for r in a["refs"])) if a["refs"] else ""
             note_str = f" Note: {a['note']}." if a["note"] else ""
@@ -154,6 +217,9 @@ def build_records(section: dict) -> tuple[dict, list[dict]]:
                 f"{note_str}"
                 f" Completion Time: {a['completion_time']}.{ref_str}"
             ).strip()
+            logic = logic_map.get(a["id"])
+            if logic:
+                body = f"{body} {logic}"
             flats.append(
                 {
                     "id": a["gid"],
@@ -177,6 +243,7 @@ def build_records(section: dict) -> tuple[dict, list[dict]]:
                         "completion_time": a["completion_time"],
                         "note": a["note"],
                         "refs": a["refs"],
+                        "logic": logic,
                         "body": body,
                     },
                 }
@@ -207,6 +274,7 @@ def build_records(section: dict) -> tuple[dict, list[dict]]:
                     "completion_time": None,
                     "note": lco_note,
                     "refs": [],
+                    "logic": None,
                     "body": (
                         f"LCO {lco} {section['title'] or ''}. "
                         f"Applicability: {section['applicability']}. "

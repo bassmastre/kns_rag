@@ -16,6 +16,8 @@ from .text import (
     RE_APPLIC,
     RE_COND_LABEL,
     RE_CONNECTOR,
+    RE_DASH_RUN,
+    RE_NOTE_OPEN,
     RE_SR_REF,
     RE_STRIP_ALABEL,
     RE_STRIP_CLABEL,
@@ -26,6 +28,34 @@ from .text import (
     strip_bracket,
     strip_note,
 )
+
+
+def act_note_spans(act_sorted: list[dict]) -> list[tuple[float, float]]:
+    """ACT 컬럼 NOTE 대시블록의 (여는 top, 닫는 top) 구간 목록.
+
+    여는 토큰(----NOTE----)과 다음 닫는 대시런(----) 사이. 노트 본문에 우연히
+    액션 라벨꼴 토큰(예: 3.4.11 Condition C 노트의 'B.2 or E.2.')이 있어도 액션
+    앵커로 오검출되지 않도록, 이 구간 '내부'를 앵커 탐지에서 배제하는 데 쓴다.
+    여는 행 자체는 제외하지 않는다(실제 액션 라벨이 노트와 같은 행에 오는 경우:
+    'A.1 ----NOTE----'). 닫는 대시런이 없으면 구간을 만들지 않는다.
+    """
+    specials = sorted(
+        (
+            w
+            for w in act_sorted
+            if RE_NOTE_OPEN.match(w["text"]) or RE_DASH_RUN.match(w["text"])
+        ),
+        key=lambda w: w["top"],
+    )
+    spans, open_top = [], None
+    for w in specials:
+        if RE_NOTE_OPEN.match(w["text"]):
+            if open_top is None:
+                open_top = w["top"]
+        elif open_top is not None:
+            spans.append((open_top, w["top"]))
+            open_top = None
+    return spans
 
 def parse_page_raw(page, cfg: dict) -> dict | None:
     """Parse one pdfplumber page into raw section fields."""
@@ -80,8 +110,15 @@ def parse_page_raw(page, cfg: dict) -> dict | None:
         ]
 
         act_sorted = sorted(act_ws, key=lambda w: (round(w["top"]), w["x0"]))
+        note_spans = act_note_spans(act_sorted)
+
+        def in_note(top: float) -> bool:
+            return any(o < top < c for o, c in note_spans)
+
         act_anchors = []
         for i, w in enumerate(act_sorted):
+            if in_note(w["top"]):
+                continue
             t = w["text"]
             if RE_ACTION_LABEL.match(t) or RE_CONNECTOR.match(t):
                 act_anchors.append(w)

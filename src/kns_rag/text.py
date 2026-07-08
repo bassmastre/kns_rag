@@ -10,6 +10,8 @@ RE_LCO_HEADER = re.compile(r"\b(\d\.\d+\.\d+)\b")
 RE_STRIP_ALABEL = re.compile(r"^[A-Z]\.\d+(?:\.\d+)?\s*")
 RE_STRIP_CLABEL = re.compile(r"^[A-Z]\.\s*")
 RE_SR_REF = re.compile(r"SR\s+\d+\.\d+\.\d+\.\d+")
+RE_NOTE_OPEN = re.compile(r"^-{3,}NOTES?-{3,}$")
+RE_DASH_RUN = re.compile(r"^-{3,}$")
 
 
 def clean_text(txt: str) -> str:
