@@ -1,13 +1,14 @@
+"""Stage 05: retrieval runs -> 생성용 프롬프트 (outputs/generation/rag_inputs.jsonl).
+
+Stage 04의 runs.jsonl이 있어야 동작한다 (즉 data/qa/qa.jsonl 이후 경계).
+"""
+
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
-import yaml
-
-ROOT = Path(__file__).resolve().parents[1]
-
-from kns_rag.io import load_jsonl, resolve_path, write_jsonl
+from kns_rag.config import DEFAULT_CONFIG_PATH, load_config
+from kns_rag.io import load_jsonl, write_jsonl
 
 
 def make_prompt(question: str, contexts: list[dict]) -> str:
@@ -24,20 +25,16 @@ def make_prompt(question: str, contexts: list[dict]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.yaml")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--runs", default=None)
     parser.add_argument("--out", default=None)
     parser.add_argument("--context-k", type=int, default=5)
     args = parser.parse_args()
 
-    config_path = resolve_path(ROOT, args.config)
-    with config_path.open("r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-
-    output_dir = resolve_path(ROOT, cfg["paths"].get("output_dir", "outputs"))
-    runs_path = resolve_path(ROOT, args.runs) if args.runs else output_dir / "retrieval" / "runs.jsonl"
-    out_path = resolve_path(ROOT, args.out) if args.out else output_dir / "generation" / "rag_inputs.jsonl"
+    cfg = load_config(args.config)
+    runs_path = cfg.resolve(args.runs) if args.runs else cfg.retrieval_runs_file
+    out_path = cfg.resolve(args.out) if args.out else cfg.rag_inputs_file
 
     rows = []
     for run in load_jsonl(runs_path):

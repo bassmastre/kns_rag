@@ -1,29 +1,22 @@
+"""Stage 04: QA 질의 -> dense retrieval runs (outputs/retrieval/runs.jsonl).
+
+이 스테이지부터는 data/qa/qa.jsonl(사람 검증 QA)이 있어야 동작한다.
+qa.jsonl은 자동 생성물이 아니라 사람이 검증한 산출물이다 — 01~03과 달리
+파이프라인이 만들어 주지 않는다. (스모크 테스트용은 scripts/qa_smoke.py 참고.)
+"""
+
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
-import yaml
-
-ROOT = Path(__file__).resolve().parents[1]
-
-from kns_rag.io import load_jsonl, resolve_path, write_jsonl
+from kns_rag.config import DEFAULT_CONFIG_PATH, load_config
+from kns_rag.io import load_jsonl, write_jsonl
 from kns_rag.retrieval import load_index, retrieve_queries
 
 
-def selected_strategies(cfg: dict, strategy_arg: str) -> list[str]:
-    configured = cfg.get("chunking", {}).get("strategies") or []
-    return configured if strategy_arg == "all" else [strategy_arg]
-
-
-def default_qa_file(cfg: dict) -> Path:
-    qa_dir = resolve_path(ROOT, cfg["paths"].get("qa_dir", "data/qa"))
-    return qa_dir / "qa.jsonl"
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.yaml")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--strategy", default="all", help="Strategy name or 'all'.")
     parser.add_argument("--qa-file", default=None)
     parser.add_argument("--top-k", type=int, default=None)
@@ -31,30 +24,28 @@ def main() -> None:
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
-    config_path = resolve_path(ROOT, args.config)
-    with config_path.open("r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_config(args.config)
 
-    qa_path = resolve_path(ROOT, args.qa_file) if args.qa_file else default_qa_file(cfg)
+    qa_path = cfg.resolve(args.qa_file) if args.qa_file else cfg.qa_file
     if not qa_path.exists():
         raise FileNotFoundError(
             f"missing QA file: {qa_path}. Create JSONL with fields id, question, gold_evidence_ids."
         )
     qa_records = load_jsonl(qa_path)
 
-    k_values = cfg.get("evaluation", {}).get("k_values") or [1, 3, 5]
+    k_values = cfg.raw.get("evaluation", {}).get("k_values") or [1, 3, 5]
     top_k = args.top_k or max(k_values)
-    output_dir = resolve_path(ROOT, cfg["paths"].get("output_dir", "outputs"))
-    index_root = output_dir / "indexes"
-    out_path = resolve_path(ROOT, args.out) if args.out else output_dir / "retrieval" / "runs.jsonl"
+    out_path = cfg.resolve(args.out) if args.out else cfg.retrieval_runs_file
 
     all_runs = []
-    for strategy in selected_strategies(cfg, args.strategy):
-        index_dir = index_root / strategy
+    for strategy in cfg.selected_strategies(args.strategy):
+        index_dir = cfg.index_dir(strategy)
         if not index_dir.exists():
-            raise FileNotFoundError(f"missing index: {index_dir}. Run scripts/build_index.py first.")
+            raise FileNotFoundError(
+                f"missing index: {index_dir}. Run scripts/03_build_index.py first."
+            )
         chunks, embeddings, meta = load_index(index_dir)
-        model_name = meta.get("model_name") or cfg.get("embedding_model", {}).get("name")
+        model_name = meta.get("model_name") or cfg.raw.get("embedding_model", {}).get("name")
         runs = retrieve_queries(
             qa_records,
             chunks=chunks,
