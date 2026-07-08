@@ -1,7 +1,7 @@
 """Chunking strategy implementations.
 
 이 모듈은 순수 변환 로직만 담당한다. 파일 입출력과 CLI 인자는
-scripts/build_chunks.py에서 처리한다.
+scripts/02_build_chunks.py에서 처리한다.
 
 출력 스키마는 모든 전략에서 동일하게 맞춘다.
 """

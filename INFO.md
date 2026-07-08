@@ -261,8 +261,12 @@ QA가 필요한 단계:
 retrieve → rag_inputs → eval
 ```
 
-따라서 `data/qa/qa.jsonl`이 없으면 `retrieve.py`와 `run_pipeline.py --to-stage eval`은
+따라서 `data/qa/qa.jsonl`이 없으면 `04_retrieve.py`와 `run_pipeline.py --to-stage eval`은
 정상적으로 실패한다. 이것은 코드 오류가 아니라 입력 데이터 부재다.
+
+스크립트 파일명의 번호(01~06)가 위 스테이지 순서를 그대로 인코딩한다.
+번호 없는 스크립트(`qa_smoke.py`, `pilot_semantic_vs_structure.py`,
+`run_pipeline.py`)는 선형 스테이지가 아니다.
 
 ---
 
