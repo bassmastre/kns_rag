@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kns-rag"
+version = "0.1.0"
+description = "Chunking-strategy comparison for RAG over NUREG-1431 STS (KNS conference experiment)"
+requires-python = ">=3.11"
+dependencies = [
+    "pdfplumber",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+# dense retrieval / semantic chunking (03_build_index, 04_retrieve, semantic strategy)
+retrieval = [
+    "numpy",
+    "sentence-transformers",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

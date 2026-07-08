@@ -1,15 +1,15 @@
+"""QA 준비 유틸: hierarchical_source에서 스모크용 QA를 자동 생성.
+
+선형 파이프라인 스테이지가 아니다. 생성물(data/qa/qa.jsonl)은 파이프라인
+배선 확인용이며 최종 평가에 쓰지 않는다 — 최종 QA는 사람이 검증해 만든다.
+"""
+
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
 
-import yaml
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-from kns_rag.io import load_jsonl, resolve_path, write_jsonl
+from kns_rag.config import DEFAULT_CONFIG_PATH, load_config
+from kns_rag.io import load_jsonl, write_jsonl
 
 
 def action_question(record: dict) -> str | None:
@@ -34,23 +34,20 @@ def completion_time_question(record: dict) -> str | None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config.yaml")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--out", default=None)
     parser.add_argument("--limit", type=int, default=40)
     args = parser.parse_args()
 
-    config_path = resolve_path(ROOT, args.config)
-    with config_path.open("r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_config(args.config)
+    out_path = cfg.resolve(args.out) if args.out else cfg.qa_file
 
-    processed_dir = resolve_path(ROOT, cfg["paths"].get("processed_dir", "data/processed"))
-    qa_dir = resolve_path(ROOT, cfg["paths"].get("qa_dir", "data/qa"))
-    out_path = resolve_path(ROOT, args.out) if args.out else qa_dir / "qa.jsonl"
-
-    source_path = processed_dir / "hierarchical_source.jsonl"
+    source_path = cfg.processed_dir / "hierarchical_source.jsonl"
     if not source_path.exists():
-        raise FileNotFoundError(f"missing source: {source_path}. Run scripts/build_corpus.py first.")
+        raise FileNotFoundError(
+            f"missing source: {source_path}. Run scripts/01_build_corpus.py first."
+        )
 
     rows = []
     for record in load_jsonl(source_path):

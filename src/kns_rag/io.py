@@ -5,12 +5,6 @@ from pathlib import Path
 from typing import Any
 
 
-def resolve_path(root: Path, value: str | Path) -> Path:
-    """Resolve a config path relative to the repository root."""
-    path = Path(value)
-    return path if path.is_absolute() else root / path
-
-
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     """Load UTF-8 JSONL with line-numbered errors."""
     records: list[dict[str, Any]] = []

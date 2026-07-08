@@ -13,5 +13,6 @@ __pycache__/
 .env
 .vscode/
 
-# samples
+# files
 text.json
+pyrightconfig.json

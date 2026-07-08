@@ -1,7 +1,7 @@
 """Chunking strategy implementations.
 
 이 모듈은 순수 변환 로직만 담당한다. 파일 입출력과 CLI 인자는
-scripts/build_chunks.py에서 처리한다.
+scripts/02_build_chunks.py에서 처리한다.
 
 출력 스키마는 모든 전략에서 동일하게 맞춘다.
 """
@@ -26,8 +26,6 @@ STRATEGY_INPUTS = {
     "semantic": RAW_INPUT,
     "action_logic": ACTION_SOURCE_INPUT,
     "condition_aware": CONDITION_CHUNKS_INPUT,
-    # Backward-compatible alias from the early config skeleton.
-    "hierarchical": CONDITION_CHUNKS_INPUT,
 }
 
 
@@ -45,7 +43,6 @@ DEFAULT_PARAMS = {
     },
     "action_logic": {},
     "condition_aware": {},
-    "hierarchical": {},
 }
 
 
@@ -496,20 +493,10 @@ def condition_aware(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return chunks
 
 
-def hierarchical(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Backward-compatible alias for condition_aware."""
-    aliased = condition_aware(records)
-    for chunk in aliased:
-        chunk["strategy"] = "hierarchical"
-        chunk["id"] = chunk["id"].replace("condition_aware::", "hierarchical::", 1)
-    return aliased
-
-
 STRATEGIES = {
     "naive_fixed_length": naive_fixed_length,
     "sliding_window": sliding_window,
     "semantic": semantic,
     "action_logic": action_logic,
     "condition_aware": condition_aware,
-    "hierarchical": hierarchical,
 }
