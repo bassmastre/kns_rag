@@ -54,6 +54,8 @@ def selected_strategies(cfg: dict, strategy_arg: str) -> list[str]:
 def strategy_params(cfg: dict, strategy: str) -> dict:
     params = dict(DEFAULT_PARAMS.get(strategy, {}))
     params.update(cfg.get("chunking", {}).get("params", {}).get(strategy, {}))
+    if strategy == "semantic" and not params.get("model_name"):
+        params["model_name"] = cfg.get("embedding_model", {}).get("name")
     return params
 
 
