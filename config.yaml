@@ -84,8 +84,8 @@ chunking:
       batch_size: 32
 
 embedding_model:
-  provider: null  # TODO: 미확정
-  name: null      # TODO: 미확정
+  provider: sentence_transformers
+  name: BAAI/bge-small-en-v1.5
 
 llm:
   generator:
