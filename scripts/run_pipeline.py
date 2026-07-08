@@ -7,12 +7,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-STAGES = ["corpus", "chunks", "index", "retrieve", "eval"]
+STAGES = ["corpus", "chunks", "index", "retrieve", "rag_inputs", "eval"]
 COMMANDS = {
     "corpus": ["scripts/build_corpus.py"],
     "chunks": ["scripts/build_chunks.py"],
     "index": ["scripts/build_index.py"],
     "retrieve": ["scripts/retrieve.py"],
+    "rag_inputs": ["scripts/build_rag_inputs.py"],
     "eval": ["scripts/eval_retrieval.py"],
 }
 
