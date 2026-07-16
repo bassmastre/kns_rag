@@ -19,9 +19,9 @@ def write_summary_csv(path, metrics, k_values):
     fieldnames = (
         ["strategy", "qa_type", "n", "mrr"]
         + [f"hit@{k}" for k in k_values]
-        + ["all_gold_mrr"]
-        + [f"all_gold@{k}" for k in k_values]
-        + [f"coverage@{k}" for k in k_values]
+        + ["set_recall_mrr"]
+        + [f"set_recall@{k}" for k in k_values]
+        + [f"recall@{k}" for k in k_values]
     )
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
@@ -33,9 +33,9 @@ def write_summary_csv(path, metrics, k_values):
                 "n": values["n"],
                 "mrr": values["mrr"],
                 **{f"hit@{k}": values[f"hit@{k}"] for k in k_values},
-                "all_gold_mrr": values["all_gold_mrr"],
-                **{f"all_gold@{k}": values[f"all_gold@{k}"] for k in k_values},
-                **{f"coverage@{k}": values[f"gold_coverage@{k}"] for k in k_values},
+                "set_recall_mrr": values["set_recall_mrr"],
+                **{f"set_recall@{k}": values[f"set_recall@{k}"] for k in k_values},
+                **{f"recall@{k}": values[f"recall@{k}"] for k in k_values},
             })
             for qtype, type_values in values.get("by_type", {}).items():
                 writer.writerow({
@@ -44,9 +44,9 @@ def write_summary_csv(path, metrics, k_values):
                     "n": type_values["n"],
                     "mrr": type_values["mrr"],
                     **{f"hit@{k}": type_values[f"hit@{k}"] for k in k_values},
-                    "all_gold_mrr": type_values["all_gold_mrr"],
-                    **{f"all_gold@{k}": type_values[f"all_gold@{k}"] for k in k_values},
-                    **{f"coverage@{k}": type_values[f"gold_coverage@{k}"] for k in k_values},
+                    "set_recall_mrr": type_values["set_recall_mrr"],
+                    **{f"set_recall@{k}": type_values[f"set_recall@{k}"] for k in k_values},
+                    **{f"recall@{k}": type_values[f"recall@{k}"] for k in k_values},
                 })
 
 
@@ -57,11 +57,6 @@ def main() -> None:
     parser.add_argument("--runs", default=None)
     parser.add_argument("--out", default=None)
     parser.add_argument("--csv-out", default=None)
-    parser.add_argument(
-        "--include-unanswerable",
-        action="store_true",
-        help="Include unanswerable QA in retrieval metrics. Default skips them.",
-    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -77,7 +72,6 @@ def main() -> None:
         qa_records,
         run_records,
         k_values=k_values,
-        skip_unanswerable=not args.include_unanswerable,
     )
     write_json(out_path, metrics)
     write_summary_csv(csv_path, metrics, k_values)
@@ -86,10 +80,10 @@ def main() -> None:
     for strategy, values in metrics["summary"].items():
         summary_line = ", ".join(
             [f"n={values['n']}", f"MRR={values['mrr']:.4f}"]
-            + [f"Hit@{k}={values[f'hit@{k}']:.4f}" for k in k_values]
-            + [f"AllGoldMRR={values['all_gold_mrr']:.4f}"]
-            + [f"AllGold@{k}={values[f'all_gold@{k}']:.4f}" for k in k_values]
-            + [f"Coverage@{k}={values[f'gold_coverage@{k}']:.4f}" for k in k_values]
+            + [f"hit@{k}={values[f'hit@{k}']:.4f}" for k in k_values]
+            + [f"set_recall_mrr={values['set_recall_mrr']:.4f}"]
+            + [f"set_recall@{k}={values[f'set_recall@{k}']:.4f}" for k in k_values]
+            + [f"recall@{k}={values[f'recall@{k}']:.4f}" for k in k_values]
         )
         print(f"{strategy}: {summary_line}")
 
