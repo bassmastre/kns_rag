@@ -1,7 +1,7 @@
 """Stage 04: QA 질의 -> dense retrieval runs (outputs/retrieval/runs.jsonl).
 
-이 스테이지부터는 data/qa/qa.jsonl(사람 검증 QA)이 있어야 동작한다.
-qa.jsonl은 자동 생성물이 아니라 사람이 검증한 산출물이다 — 01~03과 달리
+이 스테이지부터는 data/qa/dddd.jsonl(사람 검증 QA)이 있어야 동작한다.
+dddd.jsonl은 자동 생성물이 아니라 사람이 검증한 산출물이다 — 01~03과 달리
 파이프라인이 만들어 주지 않는다. (스모크 테스트용은 scripts/qa_smoke.py 참고.)
 """
 
@@ -29,7 +29,7 @@ def main() -> None:
     qa_path = cfg.resolve(args.qa_file) if args.qa_file else cfg.qa_file
     if not qa_path.exists():
         raise FileNotFoundError(
-            f"missing QA file: {qa_path}. Create JSONL with fields id, question, gold_evidence_ids."
+            f"missing QA file: {qa_path}. Create JSONL with fields id, question, evidence_keywords."
         )
     qa_records = load_jsonl(qa_path)
 

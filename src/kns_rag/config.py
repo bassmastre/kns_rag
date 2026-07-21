@@ -53,7 +53,7 @@ class ExperimentConfig:
     @property
     def qa_file(self) -> Path:
         """사람 검증 QA(JSONL). 04 이후 스테이지의 입력 경계."""
-        return self.qa_dir / "qa.jsonl"
+        return self.qa_dir / "dddd.jsonl"
 
     # --- 실험 출력 (outputs/) ---
     @property

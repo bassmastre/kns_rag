@@ -4,9 +4,9 @@ from collections import defaultdict
 from typing import Any
 
 
-def gold_keyword_groups(qa: dict[str, Any]) -> list[list[str]]:
-    """Return gold keyword groups where groups are OR and keywords inside a group are AND."""
-    value = qa["gold_keywords"]
+def evidence_keyword_groups(qa: dict[str, Any]) -> list[list[str]]:
+    """Return evidence keyword groups where groups are OR and keywords inside a group are AND."""
+    value = qa["evidence_keywords"]
     groups = []
     for item in value:
         group = [str(x) for x in item if str(x).strip()]
@@ -15,9 +15,9 @@ def gold_keyword_groups(qa: dict[str, Any]) -> list[list[str]]:
     return groups
 
 
-def gold_evidence_ids(qa: dict[str, Any]) -> list[str]:
-    """Return strict gold evidence ids for the ID-based debug path."""
-    return [str(x) for x in qa["gold_evidence_ids"] if str(x).strip()]
+def evidence_id_list(qa: dict[str, Any]) -> list[str]:
+    """Return strict evidence ids for the ID-based debug path."""
+    return [str(x) for x in qa["evidence_ids"] if str(x).strip()]
 
 
 def normalize_match_text(text: str) -> str:
@@ -35,8 +35,8 @@ def result_hits_keyword_group(result: dict[str, Any], keyword_group: list[str]) 
     return all(normalize_match_text(keyword) in body for keyword in keyword_group)
 
 
-def result_hits_gold_keywords(result: dict[str, Any], keyword_groups: list[list[str]]) -> bool:
-    """Return whether a retrieved result contains any full gold keyword group."""
+def result_hits_evidence_keywords(result: dict[str, Any], keyword_groups: list[list[str]]) -> bool:
+    """Return whether a retrieved result contains any full evidence keyword group."""
     return any(result_hits_keyword_group(result, group) for group in keyword_groups)
 
 
@@ -52,11 +52,27 @@ def result_evidence_id_set(result: dict[str, Any]) -> set[str]:
     return ids
 
 
-def result_hits_gold(result: dict[str, Any], gold_ids: set[str]) -> bool:
-    """Return whether a retrieval result overlaps any gold evidence id."""
-    if not gold_ids:
+def result_hits_evidence_ids(result: dict[str, Any], evidence_ids: set[str]) -> bool:
+    """Return whether a retrieval result overlaps any evidence id."""
+    if not evidence_ids:
         return False
-    return bool(result_evidence_id_set(result) & gold_ids)
+    return bool(result_evidence_id_set(result) & evidence_ids)
+
+
+def classify_hit(
+    result: dict,
+    keyword_group: list[str],
+    evidence_units: list[str],
+) -> str:
+    """
+    Return 'genuine' if a chunk matching the keyword group also carries
+    an evidence_ids overlap with the QA's evidence_units, else 'coincidental'.
+    Return 'unmatched' if the group does not hit this result at all.
+    """
+    if not result_hits_keyword_group(result, keyword_group):
+        return "unmatched"
+    units = {str(x) for x in evidence_units if str(x).strip()}
+    return "genuine" if result_evidence_id_set(result) & units else "coincidental"
 
 
 def ranked_results(results: list[dict[str, Any]]) -> list[tuple[int, dict[str, Any]]]:
@@ -72,8 +88,8 @@ def ranked_results(results: list[dict[str, Any]]) -> list[tuple[int, dict[str, A
 
 def set_recall_stats(results: list[dict[str, Any]], keyword_groups: list[list[str]], k_values: list[int]) -> dict[str, Any]:
     """Compute keyword-group recall and set-recall metrics in one ranked pass."""
-    gold_count = len(keyword_groups)
-    stats: dict[str, Any] = {"gold_count": gold_count}
+    unit_count = len(keyword_groups)
+    stats: dict[str, Any] = {"unit_count": unit_count}
     thresholds = sorted(set(k_values))
     snapshots: dict[int, int] = {}
     matched_groups: set[int] = set()
@@ -87,7 +103,7 @@ def set_recall_stats(results: list[dict[str, Any]], keyword_groups: list[list[st
         for i, group in enumerate(keyword_groups):
             if result_hits_keyword_group(result, group):
                 matched_groups.add(i)
-        if set_recall_rank is None and gold_count and len(matched_groups) == gold_count:
+        if set_recall_rank is None and unit_count and len(matched_groups) == unit_count:
             set_recall_rank = rank
         while threshold_idx < len(thresholds) and thresholds[threshold_idx] == rank:
             snapshots[thresholds[threshold_idx]] = len(matched_groups)
@@ -99,17 +115,17 @@ def set_recall_stats(results: list[dict[str, Any]], keyword_groups: list[list[st
 
     for k in k_values:
         matched_count = snapshots.get(k, 0)
-        stats[f"recall@{k}"] = matched_count / gold_count if gold_count else 0.0
-        stats[f"set_recall@{k}"] = bool(gold_count and matched_count == gold_count)
+        stats[f"recall@{k}"] = matched_count / unit_count if unit_count else 0.0
+        stats[f"set_recall@{k}"] = bool(unit_count and matched_count == unit_count)
     stats["set_recall_rank"] = set_recall_rank
     stats["set_recall_rr"] = 1.0 / set_recall_rank if set_recall_rank else 0.0
     return stats
 
 
-def set_recall_stats_by_ids(results: list[dict[str, Any]], gold_ids: set[str], k_values: list[int]) -> dict[str, Any]:
+def set_recall_stats_by_ids(results: list[dict[str, Any]], evidence_ids: set[str], k_values: list[int]) -> dict[str, Any]:
     """Compute ID-based recall and set-recall metrics in one ranked pass."""
-    gold_count = len(gold_ids)
-    stats: dict[str, Any] = {"gold_count": gold_count}
+    unit_count = len(evidence_ids)
+    stats: dict[str, Any] = {"unit_count": unit_count}
     thresholds = sorted(set(k_values))
     snapshots: dict[int, int] = {}
     retrieved_ids: set[str] = set()
@@ -118,23 +134,23 @@ def set_recall_stats_by_ids(results: list[dict[str, Any]], gold_ids: set[str], k
 
     for rank, result in ranked_results(results):
         while threshold_idx < len(thresholds) and thresholds[threshold_idx] < rank:
-            snapshots[thresholds[threshold_idx]] = len(gold_ids & retrieved_ids)
+            snapshots[thresholds[threshold_idx]] = len(evidence_ids & retrieved_ids)
             threshold_idx += 1
         retrieved_ids.update(result_evidence_id_set(result))
-        if set_recall_rank is None and gold_ids and gold_ids <= retrieved_ids:
+        if set_recall_rank is None and evidence_ids and evidence_ids <= retrieved_ids:
             set_recall_rank = rank
         while threshold_idx < len(thresholds) and thresholds[threshold_idx] == rank:
-            snapshots[thresholds[threshold_idx]] = len(gold_ids & retrieved_ids)
+            snapshots[thresholds[threshold_idx]] = len(evidence_ids & retrieved_ids)
             threshold_idx += 1
 
     while threshold_idx < len(thresholds):
-        snapshots[thresholds[threshold_idx]] = len(gold_ids & retrieved_ids)
+        snapshots[thresholds[threshold_idx]] = len(evidence_ids & retrieved_ids)
         threshold_idx += 1
 
     for k in k_values:
         matched_count = snapshots.get(k, 0)
-        stats[f"recall@{k}"] = matched_count / gold_count if gold_count else 0.0
-        stats[f"set_recall@{k}"] = bool(gold_ids and matched_count == gold_count)
+        stats[f"recall@{k}"] = matched_count / unit_count if unit_count else 0.0
+        stats[f"set_recall@{k}"] = bool(evidence_ids and matched_count == unit_count)
     stats["set_recall_rank"] = set_recall_rank
     stats["set_recall_rr"] = 1.0 / set_recall_rank if set_recall_rank else 0.0
     return stats
@@ -159,7 +175,7 @@ def evaluate_run_records(
     *,
     k_values: list[int],
 ) -> dict[str, Any]:
-    """Evaluate retrieval runs using gold_keywords containment."""
+    """Evaluate retrieval runs using evidence_keywords containment."""
     qa_by_id = {q.get("id"): q for q in qa_records}
     by_strategy: dict[str, list[dict[str, Any]]] = defaultdict(list)
     details: list[dict[str, Any]] = []
@@ -169,17 +185,17 @@ def evaluate_run_records(
         if qa is None:
             continue
 
-        keyword_groups = gold_keyword_groups(qa)
+        keyword_groups = evidence_keyword_groups(qa)
         ranks = []
         for result in run.get("results", []):
-            if result_hits_gold_keywords(result, keyword_groups):
+            if result_hits_evidence_keywords(result, keyword_groups):
                 ranks.append(int(result.get("rank") or 0))
         first_rank = min(ranks) if ranks else None
         row = {
             "qa_id": qa.get("id"),
             "qa_type": qa.get("type") or qa.get("qa_type"),
             "strategy": run.get("strategy"),
-            "gold_keywords": keyword_groups,
+            "evidence_keywords": keyword_groups,
             "first_hit_rank": first_rank,
         }
         for k in k_values:
@@ -212,7 +228,7 @@ def evaluate_run_records_by_ids(
     *,
     k_values: list[int],
 ) -> dict[str, Any]:
-    """Evaluate retrieval runs using strict gold_evidence_ids matching."""
+    """Evaluate retrieval runs using strict evidence_ids matching."""
     qa_by_id = {q.get("id"): q for q in qa_records}
     by_strategy: dict[str, list[dict[str, Any]]] = defaultdict(list)
     details: list[dict[str, Any]] = []
@@ -222,23 +238,23 @@ def evaluate_run_records_by_ids(
         if qa is None:
             continue
 
-        gold_ids = set(gold_evidence_ids(qa))
+        evidence_ids = set(evidence_id_list(qa))
         ranks = []
         for result in run.get("results", []):
-            if result_hits_gold(result, gold_ids):
+            if result_hits_evidence_ids(result, evidence_ids):
                 ranks.append(int(result.get("rank") or 0))
         first_rank = min(ranks) if ranks else None
         row = {
             "qa_id": qa.get("id"),
             "qa_type": qa.get("type") or qa.get("qa_type"),
             "strategy": run.get("strategy"),
-            "gold_evidence_ids": sorted(gold_ids),
+            "evidence_ids": sorted(evidence_ids),
             "first_hit_rank": first_rank,
         }
         for k in k_values:
             row[f"hit@{k}"] = bool(first_rank is not None and first_rank <= k)
         row["rr"] = 1.0 / first_rank if first_rank else 0.0
-        row.update(set_recall_stats_by_ids(run.get("results", []), gold_ids, k_values))
+        row.update(set_recall_stats_by_ids(run.get("results", []), evidence_ids, k_values))
         details.append(row)
         by_strategy[str(run.get("strategy"))].append(row)
 
