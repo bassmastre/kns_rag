@@ -79,8 +79,20 @@ class ExperimentConfig:
         return self.output_dir / "generation" / "rag_inputs.jsonl"
 
     @property
+    def generated_answers_file(self) -> Path:
+        return self.output_dir / "generation" / "answers.jsonl"
+
+    @property
+    def answer_judgements_file(self) -> Path:
+        return self.output_dir / "eval" / "answer_judgements.jsonl"
+
+    @property
     def retrieval_metrics_file(self) -> Path:
         return self.output_dir / "eval" / "retrieval_metrics.json"
+
+    @property
+    def downstream_metrics_file(self) -> Path:
+        return self.output_dir / "eval" / "downstream_metrics.json"
 
     # --- 전략 선택 ---
     def selected_strategies(self, strategy_arg: str = "all") -> list[str]:
