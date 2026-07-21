@@ -18,6 +18,20 @@ retrieval = [
     "numpy",
     "sentence-transformers",
 ]
+# local Hugging Face generator/judge (07_generate_answers, 08_eval_answers)
+# openai_compatible mode uses the standard library and does not require this extra.
+generation = [
+    "torch",
+    "transformers",
+    "accelerate",
+]
+all = [
+    "numpy",
+    "sentence-transformers",
+    "torch",
+    "transformers",
+    "accelerate",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
