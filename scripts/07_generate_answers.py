@@ -13,6 +13,13 @@ from kns_rag.io import load_jsonl, write_jsonl
 from kns_rag.llm import create_chat_backend
 
 
+def result_key(row: dict, model_name: str | None = None) -> tuple[str, str]:
+    return (
+        str(row.get("experiment_id") or ""),
+        str(model_name if model_name is not None else row.get("generator_model") or ""),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=DEFAULT_CONFIG_PATH)
@@ -46,17 +53,18 @@ def main() -> None:
     if args.limit is not None:
         selected = selected[: args.limit]
 
-    output_rows = load_jsonl(out_path) if args.resume and out_path.exists() else []
+    previous_rows = load_jsonl(out_path) if args.resume and out_path.exists() else []
+    output_by_key = {result_key(row): row for row in previous_rows}
     completed = {
-        (str(row.get("experiment_id")), str(row.get("generator_model")))
-        for row in output_rows
+        key
+        for key, row in output_by_key.items()
         if row.get("answer") and not row.get("generation_error")
     }
 
     pending = [
         row
         for row in selected
-        if (str(row.get("experiment_id")), backend.model_name) not in completed
+        if result_key(row, backend.model_name) not in completed
     ]
     print(
         f"generator={backend.model_name}, selected={len(selected)}, "
@@ -85,12 +93,13 @@ def main() -> None:
             record["answer"] = ""
             record["generation_error"] = f"{type(exc).__name__}: {exc}"
             print(f"generation error: {row.get('experiment_id')}: {record['generation_error']}")
-        output_rows.append(record)
+        output_by_key[result_key(record)] = record
 
         if index % args.checkpoint_every == 0:
-            write_jsonl(out_path, output_rows)
+            write_jsonl(out_path, list(output_by_key.values()))
             print(f"checkpoint {index}/{len(pending)} -> {out_path}")
 
+    output_rows = list(output_by_key.values())
     write_jsonl(out_path, output_rows)
     success_count = sum(bool(row.get("answer")) and not row.get("generation_error") for row in output_rows)
     print(f"answers -> {out_path} ({success_count}/{len(output_rows)} successful rows)")
