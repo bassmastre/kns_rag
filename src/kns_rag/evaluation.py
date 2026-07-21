@@ -86,6 +86,20 @@ def ranked_results(results: list[dict[str, Any]]) -> list[tuple[int, dict[str, A
     )
 
 
+def result_cumulative_tokens(result: dict[str, Any]) -> int:
+    """Return cumulative content token count emitted by Stage 04."""
+    value = result.get("cumulative_tokens")
+    if value is None:
+        raise ValueError(
+            "retrieval result is missing cumulative_tokens; rerun scripts/04_retrieve.py "
+            "with the token-budget-aware retrieval code"
+        )
+    tokens = int(value)
+    if tokens < 0:
+        raise ValueError("cumulative_tokens must be non-negative")
+    return tokens
+
+
 def set_recall_stats(results: list[dict[str, Any]], keyword_groups: list[list[str]], k_values: list[int]) -> dict[str, Any]:
     """Compute keyword-group recall and set-recall metrics in one ranked pass."""
     unit_count = len(keyword_groups)
@@ -119,6 +133,35 @@ def set_recall_stats(results: list[dict[str, Any]], keyword_groups: list[list[st
         stats[f"set_recall@{k}"] = bool(unit_count and matched_count == unit_count)
     stats["set_recall_rank"] = set_recall_rank
     stats["set_recall_rr"] = 1.0 / set_recall_rank if set_recall_rank else 0.0
+    return stats
+
+
+def token_budget_stats(
+    results: list[dict[str, Any]],
+    keyword_groups: list[list[str]],
+    token_budgets: list[int],
+) -> dict[str, Any]:
+    """Compute hit/recall/set-recall at equal cumulative content-token budgets."""
+    unit_count = len(keyword_groups)
+    stats: dict[str, Any] = {}
+    ranked = ranked_results(results)
+
+    for budget in token_budgets:
+        if budget <= 0:
+            raise ValueError("token budgets must be positive")
+        matched_groups: set[int] = set()
+        for _, result in ranked:
+            if result_cumulative_tokens(result) > budget:
+                break
+            for i, group in enumerate(keyword_groups):
+                if result_hits_keyword_group(result, group):
+                    matched_groups.add(i)
+
+        matched_count = len(matched_groups)
+        suffix = f"{budget}t"
+        stats[f"hit@{suffix}"] = bool(matched_count)
+        stats[f"recall@{suffix}"] = matched_count / unit_count if unit_count else 0.0
+        stats[f"set_recall@{suffix}"] = bool(unit_count and matched_count == unit_count)
     return stats
 
 
@@ -156,10 +199,41 @@ def set_recall_stats_by_ids(results: list[dict[str, Any]], evidence_ids: set[str
     return stats
 
 
-def summarize_rows(rows: list[dict[str, Any]], k_values: list[int]) -> dict[str, Any]:
+def token_budget_stats_by_ids(
+    results: list[dict[str, Any]],
+    evidence_ids: set[str],
+    token_budgets: list[int],
+) -> dict[str, Any]:
+    """Compute ID-based hit/recall/set-recall at equal token budgets."""
+    unit_count = len(evidence_ids)
+    stats: dict[str, Any] = {}
+    ranked = ranked_results(results)
+
+    for budget in token_budgets:
+        if budget <= 0:
+            raise ValueError("token budgets must be positive")
+        retrieved_ids: set[str] = set()
+        for _, result in ranked:
+            if result_cumulative_tokens(result) > budget:
+                break
+            retrieved_ids.update(result_evidence_id_set(result))
+
+        matched_count = len(evidence_ids & retrieved_ids)
+        suffix = f"{budget}t"
+        stats[f"hit@{suffix}"] = bool(matched_count)
+        stats[f"recall@{suffix}"] = matched_count / unit_count if unit_count else 0.0
+        stats[f"set_recall@{suffix}"] = bool(evidence_ids and matched_count == unit_count)
+    return stats
+
+
+def summarize_rows(
+    rows: list[dict[str, Any]],
+    k_values: list[int],
+    token_budgets: list[int] | None = None,
+) -> dict[str, Any]:
     """Summarize retrieval metrics for a group of detail rows."""
     n = len(rows)
-    return {
+    summary = {
         "n": n,
         "mrr": sum(r["rr"] for r in rows) / n,
         "set_recall_mrr": sum(r["set_recall_rr"] for r in rows) / n,
@@ -167,6 +241,12 @@ def summarize_rows(rows: list[dict[str, Any]], k_values: list[int]) -> dict[str,
         **{f"recall@{k}": sum(r[f"recall@{k}"] for r in rows) / n for k in k_values},
         **{f"set_recall@{k}": sum(1 for r in rows if r[f"set_recall@{k}"]) / n for k in k_values},
     }
+    for budget in token_budgets or []:
+        suffix = f"{budget}t"
+        summary[f"hit@{suffix}"] = sum(1 for r in rows if r[f"hit@{suffix}"]) / n
+        summary[f"recall@{suffix}"] = sum(r[f"recall@{suffix}"] for r in rows) / n
+        summary[f"set_recall@{suffix}"] = sum(1 for r in rows if r[f"set_recall@{suffix}"]) / n
+    return summary
 
 
 def evaluate_run_records(
@@ -174,11 +254,13 @@ def evaluate_run_records(
     run_records: list[dict[str, Any]],
     *,
     k_values: list[int],
+    token_budgets: list[int] | None = None,
 ) -> dict[str, Any]:
     """Evaluate retrieval runs using evidence_keywords containment."""
     qa_by_id = {q.get("id"): q for q in qa_records}
     by_strategy: dict[str, list[dict[str, Any]]] = defaultdict(list)
     details: list[dict[str, Any]] = []
+    token_budgets = sorted(set(token_budgets or []))
 
     for run in run_records:
         qa = qa_by_id.get(run.get("qa_id"))
@@ -197,11 +279,15 @@ def evaluate_run_records(
             "strategy": run.get("strategy"),
             "evidence_keywords": keyword_groups,
             "first_hit_rank": first_rank,
+            "selected_count": run.get("selected_count"),
+            "selected_token_count": run.get("selected_token_count"),
         }
         for k in k_values:
             row[f"hit@{k}"] = bool(first_rank is not None and first_rank <= k)
         row["rr"] = 1.0 / first_rank if first_rank else 0.0
         row.update(set_recall_stats(run.get("results", []), keyword_groups, k_values))
+        if token_budgets:
+            row.update(token_budget_stats(run.get("results", []), keyword_groups, token_budgets))
         details.append(row)
         by_strategy[str(run.get("strategy"))].append(row)
 
@@ -209,17 +295,25 @@ def evaluate_run_records(
     for strategy, rows in sorted(by_strategy.items()):
         if not rows:
             continue
-        summary[strategy] = summarize_rows(rows, k_values)
+        summary[strategy] = summarize_rows(rows, k_values, token_budgets)
 
         by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for r in rows:
             by_type[str(r.get("qa_type") or "unknown")].append(r)
         summary[strategy]["by_type"] = {
-            qtype: summarize_rows(type_rows, k_values)
+            qtype: summarize_rows(type_rows, k_values, token_budgets)
             for qtype, type_rows in sorted(by_type.items())
         }
 
-    return {"summary": summary, "details": details}
+    return {
+        "evaluation": {
+            "k_values": list(k_values),
+            "token_budgets": token_budgets,
+            "token_unit": "embedding_model_tokens_over_content.body",
+        },
+        "summary": summary,
+        "details": details,
+    }
 
 
 def evaluate_run_records_by_ids(
@@ -227,11 +321,13 @@ def evaluate_run_records_by_ids(
     run_records: list[dict[str, Any]],
     *,
     k_values: list[int],
+    token_budgets: list[int] | None = None,
 ) -> dict[str, Any]:
     """Evaluate retrieval runs using strict evidence_ids matching."""
     qa_by_id = {q.get("id"): q for q in qa_records}
     by_strategy: dict[str, list[dict[str, Any]]] = defaultdict(list)
     details: list[dict[str, Any]] = []
+    token_budgets = sorted(set(token_budgets or []))
 
     for run in run_records:
         qa = qa_by_id.get(run.get("qa_id"))
@@ -250,11 +346,15 @@ def evaluate_run_records_by_ids(
             "strategy": run.get("strategy"),
             "evidence_ids": sorted(evidence_ids),
             "first_hit_rank": first_rank,
+            "selected_count": run.get("selected_count"),
+            "selected_token_count": run.get("selected_token_count"),
         }
         for k in k_values:
             row[f"hit@{k}"] = bool(first_rank is not None and first_rank <= k)
         row["rr"] = 1.0 / first_rank if first_rank else 0.0
         row.update(set_recall_stats_by_ids(run.get("results", []), evidence_ids, k_values))
+        if token_budgets:
+            row.update(token_budget_stats_by_ids(run.get("results", []), evidence_ids, token_budgets))
         details.append(row)
         by_strategy[str(run.get("strategy"))].append(row)
 
@@ -262,14 +362,22 @@ def evaluate_run_records_by_ids(
     for strategy, rows in sorted(by_strategy.items()):
         if not rows:
             continue
-        summary[strategy] = summarize_rows(rows, k_values)
+        summary[strategy] = summarize_rows(rows, k_values, token_budgets)
 
         by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for r in rows:
             by_type[str(r.get("qa_type") or "unknown")].append(r)
         summary[strategy]["by_type"] = {
-            qtype: summarize_rows(type_rows, k_values)
+            qtype: summarize_rows(type_rows, k_values, token_budgets)
             for qtype, type_rows in sorted(by_type.items())
         }
 
-    return {"summary": summary, "details": details}
+    return {
+        "evaluation": {
+            "k_values": list(k_values),
+            "token_budgets": token_budgets,
+            "token_unit": "embedding_model_tokens_over_content.body",
+        },
+        "summary": summary,
+        "details": details,
+    }
