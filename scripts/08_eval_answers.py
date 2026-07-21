@@ -38,6 +38,20 @@ SUMMARY_FIELDS = [
 ]
 
 
+def judgement_key(row: dict, model_name: str | None = None) -> tuple[str, str]:
+    return (
+        str(row.get("experiment_id") or ""),
+        str(model_name if model_name is not None else row.get("judge_model") or ""),
+    )
+
+
+def answer_key(row: dict) -> tuple[str, str]:
+    return (
+        str(row.get("experiment_id") or ""),
+        str(row.get("generator_model") or ""),
+    )
+
+
 def write_summary_csv(path, summary) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as fh:
@@ -110,7 +124,10 @@ def main() -> None:
     csv_path = cfg.resolve(args.csv_out) if args.csv_out else metrics_path.with_suffix(".csv")
 
     qa_by_id = {str(row.get("id")): row for row in load_jsonl(qa_path)}
-    answers = load_jsonl(answers_path)
+    # Keep only the latest row for a generator/model experiment key. This removes
+    # a prior failed attempt after Stage 07 successfully retries it.
+    answers_by_key = {answer_key(row): row for row in load_jsonl(answers_path)}
+    answers = list(answers_by_key.values())
     budgets = set(args.token_budgets or [])
     selected = [
         row
@@ -125,16 +142,19 @@ def main() -> None:
     backend = create_chat_backend(settings, role="judge")
     mode = str(settings.get("mode") or "")
 
-    output_rows = load_jsonl(judgements_path) if args.resume and judgements_path.exists() else []
+    previous_rows = load_jsonl(judgements_path) if args.resume and judgements_path.exists() else []
+    output_by_key = {judgement_key(row): row for row in previous_rows}
+    # Judge parse failures are retried. Generation failures are terminal for the
+    # current answers file and are kept as completed failed downstream rows.
     completed = {
-        (str(row.get("experiment_id")), str(row.get("judge_model")))
-        for row in output_rows
-        if not row.get("judge_error") and not row.get("judge_parse_error")
+        key
+        for key, row in output_by_key.items()
+        if not row.get("judge_parse_error")
     }
     pending = [
         row
         for row in selected
-        if (str(row.get("experiment_id")), backend.model_name) not in completed
+        if judgement_key(row, backend.model_name) not in completed
     ]
     print(
         f"judge={backend.model_name}, selected={len(selected)}, "
@@ -195,11 +215,12 @@ def main() -> None:
                 print(f"judge error: {answer_row.get('experiment_id')}: {record['judge_error']}")
 
         record.update(judgement)
-        output_rows.append(record)
+        output_by_key[judgement_key(record)] = record
         if index % args.checkpoint_every == 0:
-            write_jsonl(judgements_path, output_rows)
+            write_jsonl(judgements_path, list(output_by_key.values()))
             print(f"checkpoint {index}/{len(pending)} -> {judgements_path}")
 
+    output_rows = list(output_by_key.values())
     write_jsonl(judgements_path, output_rows)
 
     selected_ids = {str(row.get("experiment_id")) for row in selected}
