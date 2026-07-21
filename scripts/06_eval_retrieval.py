@@ -18,15 +18,18 @@ BASELINE_STRATEGIES = {"naive_fixed_length", "sliding_window", "semantic"}
 DIAGNOSTIC_TOP_K = 5
 
 
-def write_summary_csv(path, metrics, k_values):
+def write_summary_csv(path, metrics, k_values, token_budgets):
     """Write overall and per-type retrieval metrics as a CSV table."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = (
         ["strategy", "qa_type", "n", "mrr"]
         + [f"hit@{k}" for k in k_values]
+        + [f"hit@{budget}t" for budget in token_budgets]
         + ["set_recall_mrr"]
         + [f"set_recall@{k}" for k in k_values]
+        + [f"set_recall@{budget}t" for budget in token_budgets]
         + [f"recall@{k}" for k in k_values]
+        + [f"recall@{budget}t" for budget in token_budgets]
     )
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
@@ -38,9 +41,12 @@ def write_summary_csv(path, metrics, k_values):
                 "n": values["n"],
                 "mrr": values["mrr"],
                 **{f"hit@{k}": values[f"hit@{k}"] for k in k_values},
+                **{f"hit@{budget}t": values[f"hit@{budget}t"] for budget in token_budgets},
                 "set_recall_mrr": values["set_recall_mrr"],
                 **{f"set_recall@{k}": values[f"set_recall@{k}"] for k in k_values},
+                **{f"set_recall@{budget}t": values[f"set_recall@{budget}t"] for budget in token_budgets},
                 **{f"recall@{k}": values[f"recall@{k}"] for k in k_values},
+                **{f"recall@{budget}t": values[f"recall@{budget}t"] for budget in token_budgets},
             })
             for qtype, type_values in values.get("by_type", {}).items():
                 writer.writerow({
@@ -49,9 +55,12 @@ def write_summary_csv(path, metrics, k_values):
                     "n": type_values["n"],
                     "mrr": type_values["mrr"],
                     **{f"hit@{k}": type_values[f"hit@{k}"] for k in k_values},
+                    **{f"hit@{budget}t": type_values[f"hit@{budget}t"] for budget in token_budgets},
                     "set_recall_mrr": type_values["set_recall_mrr"],
                     **{f"set_recall@{k}": type_values[f"set_recall@{k}"] for k in k_values},
+                    **{f"set_recall@{budget}t": type_values[f"set_recall@{budget}t"] for budget in token_budgets},
                     **{f"recall@{k}": type_values[f"recall@{k}"] for k in k_values},
+                    **{f"recall@{budget}t": type_values[f"recall@{budget}t"] for budget in token_budgets},
                 })
 
 
@@ -125,14 +134,20 @@ def main() -> None:
 
     qa_records = load_jsonl(qa_path)
     run_records = load_jsonl(runs_path)
-    k_values = cfg.raw.get("evaluation", {}).get("k_values") or [1, 3, 5]
+    evaluation_cfg = cfg.raw.get("evaluation", {})
+    k_values = [int(x) for x in (evaluation_cfg.get("k_values") or [1, 3, 5])]
+    token_budgets = sorted(set(int(x) for x in (evaluation_cfg.get("token_budgets") or [])))
+    if any(value <= 0 for value in token_budgets):
+        raise ValueError("evaluation.token_budgets must contain positive integers")
+
     metrics = evaluate_run_records(
         qa_records,
         run_records,
         k_values=k_values,
+        token_budgets=token_budgets,
     )
     write_json(out_path, metrics)
-    write_summary_csv(csv_path, metrics, k_values)
+    write_summary_csv(csv_path, metrics, k_values, token_budgets)
     diagnostics = diagnostic_rows(qa_records, run_records)
     write_diagnostics_csv(diagnostics_path, diagnostics)
     print(f"metrics -> {out_path}")
@@ -146,9 +161,12 @@ def main() -> None:
         summary_line = ", ".join(
             [f"n={values['n']}", f"MRR={values['mrr']:.4f}"]
             + [f"hit@{k}={values[f'hit@{k}']:.4f}" for k in k_values]
+            + [f"hit@{budget}t={values[f'hit@{budget}t']:.4f}" for budget in token_budgets]
             + [f"set_recall_mrr={values['set_recall_mrr']:.4f}"]
             + [f"set_recall@{k}={values[f'set_recall@{k}']:.4f}" for k in k_values]
+            + [f"set_recall@{budget}t={values[f'set_recall@{budget}t']:.4f}" for budget in token_budgets]
             + [f"recall@{k}={values[f'recall@{k}']:.4f}" for k in k_values]
+            + [f"recall@{budget}t={values[f'recall@{budget}t']:.4f}" for budget in token_budgets]
         )
         print(f"{strategy}: {summary_line}")
 
