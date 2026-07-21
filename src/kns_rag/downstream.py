@@ -119,12 +119,26 @@ def _score(value: Any, field: str) -> int:
     return score
 
 
+def _boolean(value: Any, field: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "1"}:
+            return True
+        if normalized in {"false", "no", "0", ""}:
+            return False
+    raise ValueError(f"judge field {field!r} must be a boolean")
+
+
 def normalize_judgement(value: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize one LLM-as-judge JSON result."""
     correctness = _score(value.get("correctness"), "correctness")
     completeness = _score(value.get("completeness"), "completeness")
     relation_accuracy = _score(value.get("relation_accuracy"), "relation_accuracy")
-    unsupported_claim = bool(value.get("unsupported_claim", False))
+    unsupported_claim = _boolean(value.get("unsupported_claim", False), "unsupported_claim")
 
     raw_errors = value.get("error_types") or []
     if isinstance(raw_errors, str):
