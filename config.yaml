@@ -69,7 +69,7 @@ evaluation:
   # main 비교는 동일 누적 content.body 토큰 예산에서 수행한다.
   # Stage 04는 최댓값까지 ranked prefix를 보존하고 Stage 06은 각 예산별 지표를 계산한다.
   token_budgets: [256, 512, 1024]
-  # 채점 기준: gold_keywords containment (main). chunk ID exact-match 아님.
+  # 채점 기준: evidence_keywords containment (main). chunk ID exact-match 아님.
   #   이유: evidence_ids 부여 방식이 전략별로 다름(구조=정확한 id,
   #   baseline=정규식 추측) → ID 경로는 공정 비교 불가. CLAUDE.md "채점 기준" 참고.
   # 06이 산출하는 지표: hit/recall/set_recall @ k 및 @ token budget, MRR
