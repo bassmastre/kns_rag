@@ -64,13 +64,16 @@ qa_dataset:
   # 어떤 코드도 이 블록을 읽지 않는다. 설계 기록용.
 
 evaluation:
+  # 기존 rank 기반 지표는 진단용으로 유지한다.
   k_values: [1, 3, 5]
- # 채점 기준: gold_keywords containment (main). chunk ID exact-match 아님.
+  # main 비교는 동일 누적 content.body 토큰 예산에서 수행한다.
+  # Stage 04는 최댓값까지 ranked prefix를 보존하고 Stage 06은 각 예산별 지표를 계산한다.
+  token_budgets: [256, 512, 1024]
+  # 채점 기준: gold_keywords containment (main). chunk ID exact-match 아님.
   #   이유: evidence_ids 부여 방식이 전략별로 다름(구조=정확한 id,
   #   baseline=정규식 추측) → ID 경로는 공정 비교 불가. CLAUDE.md "채점 기준" 참고.
-  # 06이 산출하는 지표: hit@k, mrr, coverage@k, all_gold@k, all_gold_mrr
-  # main 지표 확정: 미결정. hit@k vs all_gold@k/coverage@k 선택이 승자를 바꿈.
-  #   결정 시 평균 chunk 크기·chunk 개수를 반드시 병기할 것(chunk 크기 confound).
+  # 06이 산출하는 지표: hit/recall/set_recall @ k 및 @ token budget, MRR
+  # MRR/set_recall_mrr은 chunk granularity의 영향을 받으므로 보조 지표로 해석한다.
 
 chunking:
   strategies:
@@ -110,5 +113,5 @@ llm:
 
 retrieval:
   method: dense  # 고정 — lexical/hybrid 비교는 범위 밖
-
-
+  # 토큰 예산을 채우기에 충분한 dense 후보 수. 최종 선택은 strict ranked prefix.
+  candidate_k: 100
