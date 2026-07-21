@@ -91,7 +91,11 @@ def main() -> None:
             record["generation_error"] = None
         except Exception as exc:  # keep long experiment runs resumable
             record["answer"] = ""
-            record["generation_error"] = f"{type(exc).__name__}: {exc}"
+            cause = exc.__cause__
+            detail = f"{type(exc).__name__}: {exc}"
+            if cause:
+                detail += f" | cause: {type(cause).__name__}: {cause}"
+            record["generation_error"] = detail
             print(f"generation error: {row.get('experiment_id')}: {record['generation_error']}")
         output_by_key[result_key(record)] = record
 

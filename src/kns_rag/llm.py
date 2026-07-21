@@ -68,9 +68,16 @@ class OpenAICompatibleBackend:
                 choices = data.get("choices") or []
                 if not choices:
                     raise RuntimeError(f"chat endpoint returned no choices: {data}")
-                content = choices[0].get("message", {}).get("content")
-                if content is None:
-                    raise RuntimeError(f"chat endpoint returned no message content: {data}")
+                message = choices[0].get("message", {})
+                content = message.get("content")
+                if not content or not str(content).strip():
+                    reasoning = message.get("reasoning") or message.get("reasoning_content")
+                    if reasoning and str(reasoning).strip():
+                        raise RuntimeError(
+                            f"chat endpoint returned only reasoning, no content "
+                            f"(reasoning consumed the token budget): {str(reasoning)[:200]}"
+                        )
+                    raise RuntimeError(f"chat endpoint returned empty content: {data}")
                 return str(content).strip()
             except (HTTPError, URLError, TimeoutError, RuntimeError, json.JSONDecodeError) as exc:
                 last_error = exc
