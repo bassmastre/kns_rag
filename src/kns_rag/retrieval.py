@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .embeddings import encode_texts
+from .embeddings import count_text_tokens, encode_texts
 from .io import chunk_body, load_json, load_jsonl, write_json, write_jsonl
 
 
@@ -61,15 +61,70 @@ def search_embeddings(query_embedding: Any, chunk_embeddings: Any, *, top_k: int
     return [(int(i), float(scores[i])) for i in idx]
 
 
-def retrieve_queries(qa_records: list[dict[str, Any]], *, chunks: list[dict[str, Any]], chunk_embeddings: Any, model_name: str, strategy: str, top_k: int, batch_size: int = 32) -> list[dict[str, Any]]:
+def select_ranked_prefix_by_token_budget(
+    ranked_pairs: list[tuple[int, float]],
+    *,
+    token_counts: list[int],
+    max_token_budget: int | None,
+) -> list[tuple[int, float, int, int]]:
+    """Keep the highest-ranked prefix that fits within the token budget.
+
+    The selector never skips an oversized higher-ranked chunk to fit a smaller
+    lower-ranked chunk. This strict-prefix rule preserves dense ranking order
+    and avoids introducing a small-chunk selection bias.
+    """
+    if max_token_budget is not None and max_token_budget <= 0:
+        raise ValueError("max_token_budget must be positive")
+
+    selected: list[tuple[int, float, int, int]] = []
+    cumulative_tokens = 0
+    for chunk_idx, score in ranked_pairs:
+        token_count = int(token_counts[chunk_idx])
+        if token_count < 0:
+            raise ValueError("token_count must be non-negative")
+        next_total = cumulative_tokens + token_count
+        if max_token_budget is not None and next_total > max_token_budget:
+            break
+        cumulative_tokens = next_total
+        selected.append((chunk_idx, score, token_count, cumulative_tokens))
+    return selected
+
+
+def retrieve_queries(
+    qa_records: list[dict[str, Any]],
+    *,
+    chunks: list[dict[str, Any]],
+    chunk_embeddings: Any,
+    model_name: str,
+    strategy: str,
+    candidate_k: int,
+    max_token_budget: int | None,
+    batch_size: int = 32,
+) -> list[dict[str, Any]]:
+    if candidate_k <= 0:
+        raise ValueError("candidate_k must be positive")
+
     questions = [str(q.get("question") or "").strip() for q in qa_records]
-    query_embeddings = encode_texts(questions, model_name=model_name, batch_size=batch_size, normalize=True, show_progress_bar=False)
+    query_embeddings = encode_texts(
+        questions,
+        model_name=model_name,
+        batch_size=batch_size,
+        normalize=True,
+        show_progress_bar=False,
+    )
+    token_counts = count_text_tokens([chunk_body(chunk) for chunk in chunks], model_name=model_name)
 
     runs: list[dict[str, Any]] = []
     for qa, query_emb in zip(qa_records, query_embeddings):
+        candidates = search_embeddings(query_emb, chunk_embeddings, top_k=candidate_k)
+        selected = select_ranked_prefix_by_token_budget(
+            candidates,
+            token_counts=token_counts,
+            max_token_budget=max_token_budget,
+        )
+
         ranked = []
-        for rank, pair in enumerate(search_embeddings(query_emb, chunk_embeddings, top_k=top_k), 1):
-            chunk_idx, score = pair
+        for rank, (chunk_idx, score, token_count, cumulative_tokens) in enumerate(selected, 1):
             chunk = chunks[chunk_idx]
             ranked.append({
                 "rank": rank,
@@ -78,13 +133,22 @@ def retrieve_queries(qa_records: list[dict[str, Any]], *, chunks: list[dict[str,
                 "evidence_ids": chunk.get("metadata", {}).get("evidence_ids") or [],
                 "body": chunk_body(chunk),
                 "metadata": chunk.get("metadata", {}),
+                "token_count": token_count,
+                "cumulative_tokens": cumulative_tokens,
             })
+
         runs.append({
             "qa_id": qa.get("id"),
             "question": qa.get("question"),
             "qa_type": qa.get("type") or qa.get("qa_type"),
             "strategy": strategy,
-            "top_k": top_k,
+            "candidate_k": candidate_k,
+            "max_token_budget": max_token_budget,
+            "selected_count": len(ranked),
+            "selected_token_count": ranked[-1]["cumulative_tokens"] if ranked else 0,
+            "token_count_field": "content.body",
+            "tokenizer_model": model_name,
+            "selection_policy": "strict_ranked_prefix",
             "results": ranked,
         })
     return runs
