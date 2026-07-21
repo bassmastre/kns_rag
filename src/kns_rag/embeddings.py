@@ -16,6 +16,31 @@ def load_sentence_transformer(model_name: str):
     return SentenceTransformer(model_name)
 
 
+def count_text_tokens(texts: list[str], *, model_name: str) -> list[int]:
+    """Count content tokens with the embedding model tokenizer.
+
+    Special tokens are excluded because the retrieval budget is applied to the
+    concatenated chunk bodies, not to separately encoded model inputs.
+    """
+    model = load_sentence_transformer(model_name)
+    tokenizer = getattr(model, "tokenizer", None)
+    if tokenizer is None:
+        raise RuntimeError(f"embedding model does not expose a tokenizer: {model_name}")
+
+    encoded = tokenizer(
+        texts,
+        add_special_tokens=False,
+        padding=False,
+        truncation=False,
+        return_attention_mask=False,
+        return_token_type_ids=False,
+    )
+    input_ids = encoded.get("input_ids")
+    if input_ids is None or len(input_ids) != len(texts):
+        raise RuntimeError("tokenizer returned an unexpected input_ids shape")
+    return [len(ids) for ids in input_ids]
+
+
 def encode_texts(
     texts: list[str],
     *,
