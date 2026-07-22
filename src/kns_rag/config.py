@@ -33,7 +33,6 @@ class ExperimentConfig:
     def _path(self, key: str, default: str) -> Path:
         return self.resolve(self.raw.get("paths", {}).get(key, default))
 
-    # --- 입력/파생 (data/) ---
     @property
     def pdf_path(self) -> Path:
         return self.resolve(self.raw["pdf_path"])
@@ -52,10 +51,8 @@ class ExperimentConfig:
 
     @property
     def qa_file(self) -> Path:
-        """사람 검증 QA(JSONL). 04 이후 스테이지의 입력 경계."""
         return self.qa_dir / "dddd.jsonl"
 
-    # --- 실험 출력 (outputs/) ---
     @property
     def output_dir(self) -> Path:
         return self._path("output_dir", "outputs")
@@ -84,11 +81,10 @@ class ExperimentConfig:
 
     @property
     def llm_only_answers_file(self) -> Path:
-        return self.output_dir / "generation" / "answers_llm_only.jsonl"
+        return self.output_dir / "generation" / "answers_llm_only_forced.jsonl"
 
     @property
     def answer_judgements_file(self) -> Path:
-        """Legacy 0-2 score judge output from scripts/08_eval_answers.py."""
         return self.output_dir / "eval" / "answer_judgements.jsonl"
 
     @property
@@ -97,7 +93,7 @@ class ExperimentConfig:
 
     @property
     def llm_only_judgements_file(self) -> Path:
-        return self.output_dir / "eval" / "llm_only_judgements_strict.jsonl"
+        return self.output_dir / "eval" / "llm_only_forced_judgements_strict.jsonl"
 
     @property
     def retrieval_metrics_file(self) -> Path:
@@ -107,16 +103,12 @@ class ExperimentConfig:
     def downstream_metrics_file(self) -> Path:
         return self.output_dir / "eval" / "downstream_metrics.json"
 
-    # --- 전략 선택 ---
     def selected_strategies(self, strategy_arg: str = "all") -> list[str]:
-        """'all'이면 config.chunking.strategies, 아니면 [strategy_arg]."""
         if strategy_arg == "all":
             return list(self.raw.get("chunking", {}).get("strategies") or [])
         return [strategy_arg]
 
 
-# editable install(src-layout) 기준 repo 루트의 config.yaml.
-# 스크립트 argparse의 --config 기본값으로 쓰여 어느 cwd에서든 zero-arg 실행 가능.
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.yaml"
 
 
