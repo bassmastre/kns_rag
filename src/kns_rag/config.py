@@ -75,12 +75,32 @@ class ExperimentConfig:
         return self.output_dir / "retrieval" / "runs.jsonl"
 
     @property
+    def generation_dir(self) -> Path:
+        return self.output_dir / "generation"
+
+    @property
     def rag_inputs_file(self) -> Path:
-        return self.output_dir / "generation" / "rag_inputs.jsonl"
+        return self.generation_dir / "rag_inputs.jsonl"
+
+    @property
+    def rag_answers_file(self) -> Path:
+        return self.generation_dir / "answers_rag.jsonl"
+
+    @property
+    def llm_only_answers_file(self) -> Path:
+        return self.generation_dir / "answers_llm_only.jsonl"
+
+    @property
+    def eval_dir(self) -> Path:
+        return self.output_dir / "eval"
 
     @property
     def retrieval_metrics_file(self) -> Path:
-        return self.output_dir / "eval" / "retrieval_metrics.json"
+        return self.eval_dir / "retrieval_metrics.json"
+
+    @property
+    def judge_results_file(self) -> Path:
+        return self.eval_dir / "llm_judge_results.jsonl"
 
     # --- 전략 선택 ---
     def selected_strategies(self, strategy_arg: str = "all") -> list[str]:
