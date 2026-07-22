@@ -1,13 +1,17 @@
-# LLM-only baseline and strict LLM judge
+# Forced-answer LLM-only baseline and strict LLM judge
 
 This branch keeps the existing token-budget RAG generation pipeline unchanged and
 adds two separate paper-facing utilities.
 
-## 1. LLM-only baseline
+## 1. Forced-answer LLM-only baseline
 
 The baseline uses the same `llm.generator` configuration as Stage 07 but sends
-only the QA question. No retrieved context, chunk, evidence ID, or metadata is
-provided.
+only the QA question. No retrieved context, chunk, evidence ID, reference answer,
+or metadata is provided to the generator.
+
+The model is explicitly required to commit to its best answer. Refusals,
+`INSUFFICIENT_CONTEXT`, placeholders, and instructions to consult another
+document are prohibited. This is the only no-context baseline used in the paper.
 
 ```bash
 python scripts/07_generate_llm_only.py
@@ -16,8 +20,12 @@ python scripts/07_generate_llm_only.py
 Default output:
 
 ```text
-outputs/generation/answers_llm_only.jsonl
+outputs/generation/answers_llm_only_forced.jsonl
 ```
+
+The earlier abstention-enabled output, if present at
+`outputs/generation/answers_llm_only.jsonl`, is not reused and should not be
+reported as the baseline result.
 
 The script checkpoints every 10 records and resumes completed
 `(experiment_id, generator_model)` pairs by default.
@@ -35,7 +43,7 @@ RAG answers:
 python scripts/08_eval_llm_judge.py --answers-kind rag
 ```
 
-LLM-only answers:
+Forced-answer LLM-only answers:
 
 ```bash
 python scripts/08_eval_llm_judge.py --answers-kind llm_only
