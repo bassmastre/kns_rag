@@ -83,8 +83,21 @@ class ExperimentConfig:
         return self.output_dir / "generation" / "answers.jsonl"
 
     @property
+    def llm_only_answers_file(self) -> Path:
+        return self.output_dir / "generation" / "answers_llm_only.jsonl"
+
+    @property
     def answer_judgements_file(self) -> Path:
+        """Legacy 0-2 score judge output from scripts/08_eval_answers.py."""
         return self.output_dir / "eval" / "answer_judgements.jsonl"
+
+    @property
+    def strict_answer_judgements_file(self) -> Path:
+        return self.output_dir / "eval" / "answer_judgements_strict.jsonl"
+
+    @property
+    def llm_only_judgements_file(self) -> Path:
+        return self.output_dir / "eval" / "llm_only_judgements_strict.jsonl"
 
     @property
     def retrieval_metrics_file(self) -> Path:
