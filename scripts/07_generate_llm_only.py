@@ -1,0 +1,151 @@
+"""Generate the no-context (LLM-only) baseline for every QA record.
+
+The configured generator is reused from config.yaml. No retrieval result or
+context is supplied. Results are checkpointed and resumable.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import time
+from pathlib import Path
+
+from kns_rag.config import DEFAULT_CONFIG_PATH, load_config
+from kns_rag.io import load_jsonl, write_jsonl
+from kns_rag.llm import create_chat_backend
+from kns_rag.strict_judge import build_llm_only_messages
+
+
+def result_key(row: dict, model_name: str | None = None) -> tuple[str, str]:
+    return (
+        str(row.get("experiment_id") or ""),
+        str(model_name if model_name is not None else row.get("generator_model") or ""),
+    )
+
+
+def configure_logger(log_path: Path) -> logging.Logger:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger("generate_llm_only")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    logger.addHandler(handler)
+    logger.propagate = False
+    return logger
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH)
+    parser.add_argument("--qa-file", default=None)
+    parser.add_argument("--out", default=None)
+    parser.add_argument("--log-file", default=None)
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--checkpoint-every", type=int, default=10)
+    parser.add_argument(
+        "--resume",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    args = parser.parse_args()
+
+    if args.checkpoint_every <= 0:
+        parser.error("--checkpoint-every must be positive")
+
+    cfg = load_config(args.config)
+    qa_path = cfg.resolve(args.qa_file) if args.qa_file else cfg.qa_file
+    out_path = cfg.resolve(args.out) if args.out else cfg.llm_only_answers_file
+    log_path = cfg.resolve(args.log_file) if args.log_file else out_path.with_suffix(".log")
+    logger = configure_logger(log_path)
+
+    settings = dict(cfg.raw.get("llm", {}).get("generator") or {})
+    backend = create_chat_backend(settings, role="generator")
+    mode = str(settings.get("mode") or "")
+
+    qa_rows = load_jsonl(qa_path)
+    if args.limit is not None:
+        qa_rows = qa_rows[: args.limit]
+
+    previous_rows = load_jsonl(out_path) if args.resume and out_path.exists() else []
+    output_by_key = {result_key(row): row for row in previous_rows}
+    completed = {
+        key
+        for key, row in output_by_key.items()
+        if row.get("answer") and not row.get("generation_error")
+    }
+    pending = [
+        qa
+        for qa in qa_rows
+        if result_key(
+            {"experiment_id": f"{qa.get('id')}::llm_only"},
+            backend.model_name,
+        )
+        not in completed
+    ]
+
+    print(
+        f"model={backend.model_name} | selected={len(qa_rows)} | "
+        f"completed={len(qa_rows) - len(pending)} | pending={len(pending)}"
+    )
+    logger.info(
+        "llm-only generation started | model=%s | selected=%d | pending=%d",
+        backend.model_name,
+        len(qa_rows),
+        len(pending),
+    )
+
+    for index, qa in enumerate(pending, 1):
+        qa_id = str(qa.get("id") or "")
+        experiment_id = f"{qa_id}::llm_only"
+        record = {
+            "experiment_id": experiment_id,
+            "qa_id": qa_id,
+            "qa_type": qa.get("type") or qa.get("qa_type"),
+            "strategy": "llm_only",
+            "question": qa.get("question"),
+            "source_section": qa.get("source_section"),
+            "context_token_budget": 0,
+            "context_tokens": 0,
+            "context_count": 0,
+            "contexts": [],
+            "generator_mode": mode,
+            "generator_model": backend.model_name,
+        }
+        started = time.perf_counter()
+        try:
+            record["answer"] = backend.generate(
+                build_llm_only_messages(str(qa.get("question") or ""))
+            )
+            record["generation_error"] = None
+        except Exception as exc:
+            cause = exc.__cause__
+            detail = f"{type(exc).__name__}: {exc}"
+            if cause:
+                detail += f" | cause: {type(cause).__name__}: {cause}"
+            record["answer"] = ""
+            record["generation_error"] = detail
+            logger.exception(
+                "generation failed | experiment_id=%s | error=%s",
+                experiment_id,
+                detail,
+            )
+        record["generation_seconds"] = round(time.perf_counter() - started, 3)
+        output_by_key[result_key(record)] = record
+        print(
+            f"[{index}/{len(pending)}] {experiment_id} | "
+            f"success={record['generation_error'] is None} | "
+            f"{record['generation_seconds']:.1f}s"
+        )
+        if index % args.checkpoint_every == 0:
+            write_jsonl(out_path, list(output_by_key.values()))
+            logger.info("checkpoint saved | %d/%d | output=%s", index, len(pending), out_path)
+
+    write_jsonl(out_path, list(output_by_key.values()))
+    print(f"llm-only answers -> {out_path}")
+    print(f"log -> {log_path}")
+
+
+if __name__ == "__main__":
+    main()
