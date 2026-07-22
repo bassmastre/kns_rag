@@ -36,6 +36,7 @@ class OpenAICompatibleBackend:
     timeout_seconds: float = 120.0
     retries: int = 2
     seed: int | None = 42
+    reasoning_effort: str | None = None
 
     def _endpoint(self) -> str:
         base = self.base_url.rstrip("/")
@@ -50,8 +51,12 @@ class OpenAICompatibleBackend:
             "max_tokens": self.max_new_tokens,
             "temperature": self.temperature,
         }
+
         if self.seed is not None:
             payload["seed"] = self.seed
+
+        if self.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.reasoning_effort
 
         headers = {"Content-Type": "application/json"}
         api_key = os.environ.get(self.api_key_env, "").strip()
@@ -205,8 +210,17 @@ def create_chat_backend(settings: dict[str, Any], *, role: str) -> ChatBackend:
             base_url=base_url,
             api_key_env=str(settings.get("api_key_env") or "OPENAI_API_KEY"),
             timeout_seconds=float(settings.get("timeout_seconds") or 120.0),
-            retries=int(settings.get("retries") or 2),
+            retries=(
+                int(settings["retries"])
+                if settings.get("retries") is not None
+                else 2
+            ),
             seed=int(settings["seed"]) if settings.get("seed") is not None else None,
+            reasoning_effort=(
+                str(settings["reasoning_effort"])
+                if settings.get("reasoning_effort") is not None
+                else None
+            ),
         )
     if mode == "transformers":
         return TransformersBackend(

@@ -21,9 +21,23 @@ ALLOWED_ERROR_TYPES = {
 
 
 ANSWER_SYSTEM_PROMPT = """You answer nuclear technical specification questions using only the supplied context.
-Preserve the exact logical relationships between Conditions, Required Actions, Completion Times, AND/OR connectors, notes, and alternatives.
-Do not combine an action with a Completion Time from another row.
-Give a direct answer. If the context is insufficient, answer exactly: INSUFFICIENT_CONTEXT."""
+
+Select only the provision whose LCO applicability and operating MODE match the question. Ignore provisions for other operating MODES, even when their wording or numerical limits are identical.
+
+Preserve the exact logical relationships among Conditions, Required Actions, Completion Times, AND/OR connectors, notes, provisos, and alternatives. Do not combine a Required Action with a Completion Time from another row. Preserve all numerical values, units, inequalities, and logical connectors exactly; paraphrase only the surrounding explanation.
+
+Answer in exactly this structure:
+
+1. Applicable provision: State the applicable LCO number and operating MODE.
+2. Answer: Give the direct answer concisely.
+3. Conditions or alternatives: Include all provisos, required conditions, or alternatives necessary for the answer. Write “None” when none are relevant.
+
+Keep each item concise.
+
+If the supplied context does not contain a provision applicable to the operating MODE stated in the question, or is otherwise insufficient to answer reliably, respond with exactly:
+
+INSUFFICIENT_CONTEXT
+"""
 
 
 JUDGE_SYSTEM_PROMPT = """You are a strict evaluator of answers about nuclear technical specifications.
