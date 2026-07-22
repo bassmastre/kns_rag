@@ -11,6 +11,8 @@ import logging
 import time
 from pathlib import Path
 
+from tqdm import tqdm
+
 from kns_rag.config import DEFAULT_CONFIG_PATH, load_config
 from kns_rag.io import load_jsonl, write_jsonl
 from kns_rag.llm import create_chat_backend
@@ -34,6 +36,15 @@ def configure_logger(log_path: Path) -> logging.Logger:
     logger.addHandler(handler)
     logger.propagate = False
     return logger
+
+
+def format_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
 
 
 def main() -> None:
@@ -87,7 +98,8 @@ def main() -> None:
 
     print(
         f"model={backend.model_name} | selected={len(qa_rows)} | "
-        f"completed={len(qa_rows) - len(pending)} | pending={len(pending)}"
+        f"completed={len(qa_rows) - len(pending)} | pending={len(pending)} | "
+        f"log={log_path}"
     )
     logger.info(
         "llm-only generation started | model=%s | selected=%d | pending=%d",
@@ -96,7 +108,19 @@ def main() -> None:
         len(pending),
     )
 
-    for index, qa in enumerate(pending, 1):
+    generation_times: list[float] = []
+    success_count = 0
+    failure_count = 0
+    progress = tqdm(
+        pending,
+        total=len(pending),
+        desc="Generating LLM-only",
+        unit="answer",
+        dynamic_ncols=True,
+        smoothing=0.1,
+    )
+
+    for index, qa in enumerate(progress, 1):
         qa_id = str(qa.get("id") or "")
         experiment_id = f"{qa_id}::llm_only"
         record = {
@@ -119,6 +143,7 @@ def main() -> None:
                 build_llm_only_messages(str(qa.get("question") or ""))
             )
             record["generation_error"] = None
+            success_count += 1
         except Exception as exc:
             cause = exc.__cause__
             detail = f"{type(exc).__name__}: {exc}"
@@ -126,23 +151,47 @@ def main() -> None:
                 detail += f" | cause: {type(cause).__name__}: {cause}"
             record["answer"] = ""
             record["generation_error"] = detail
+            failure_count += 1
             logger.exception(
                 "generation failed | experiment_id=%s | error=%s",
                 experiment_id,
                 detail,
             )
-        record["generation_seconds"] = round(time.perf_counter() - started, 3)
+
+        generation_seconds = time.perf_counter() - started
+        record["generation_seconds"] = round(generation_seconds, 3)
+        generation_times.append(generation_seconds)
         output_by_key[result_key(record)] = record
-        print(
-            f"[{index}/{len(pending)}] {experiment_id} | "
-            f"success={record['generation_error'] is None} | "
-            f"{record['generation_seconds']:.1f}s"
+
+        average_seconds = sum(generation_times) / len(generation_times)
+        estimated_remaining = average_seconds * (len(pending) - index)
+        progress.set_postfix(
+            {
+                "last": f"{generation_seconds:.1f}s",
+                "avg": f"{average_seconds:.1f}s",
+                "left": format_duration(estimated_remaining),
+                "ok": success_count,
+                "err": failure_count,
+            },
+            refresh=True,
         )
+        logger.info(
+            "generation completed | %d/%d | experiment_id=%s | seconds=%.3f | success=%s",
+            index,
+            len(pending),
+            experiment_id,
+            generation_seconds,
+            record["generation_error"] is None,
+        )
+
         if index % args.checkpoint_every == 0:
             write_jsonl(out_path, list(output_by_key.values()))
             logger.info("checkpoint saved | %d/%d | output=%s", index, len(pending), out_path)
 
+    progress.close()
     write_jsonl(out_path, list(output_by_key.values()))
+    print()
+    print(f"완료: {success_count}건 성공, {failure_count}건 실패")
     print(f"llm-only answers -> {out_path}")
     print(f"log -> {log_path}")
 
