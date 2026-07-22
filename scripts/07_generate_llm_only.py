@@ -1,7 +1,8 @@
-"""Generate the no-context (LLM-only) baseline for every QA record.
+"""Generate the forced-answer, no-context baseline for every QA record.
 
 The configured generator is reused from config.yaml. No retrieval result or
-context is supplied. Results are checkpointed and resumable.
+context is supplied. The model must commit to its best answer. Results are
+checkpointed and resumable.
 """
 
 from __future__ import annotations
@@ -16,7 +17,21 @@ from tqdm import tqdm
 from kns_rag.config import DEFAULT_CONFIG_PATH, load_config
 from kns_rag.io import load_jsonl, write_jsonl
 from kns_rag.llm import create_chat_backend
-from kns_rag.strict_judge import build_llm_only_messages
+
+
+FORCED_ANSWER_SYSTEM_PROMPT = """Answer each question using only your internal model knowledge. No retrieved context is available.
+
+You must commit to your best answer. Do not refuse, abstain, ask for more context, output INSUFFICIENT_CONTEXT, or use placeholders such as [Condition X] or [Action Y]. Do not tell the user to consult another document.
+
+Give a direct and complete answer. State the applicable section number. Include every mandatory AND-bound requirement, every OR alternative requested by the question, the correct Condition letter and logical structure, and all required numeric values, inequalities, units, actions, and Completion Times. When uncertain, select the single most likely answer and state it without qualification.
+"""
+
+
+def build_forced_answer_messages(question: str) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": FORCED_ANSWER_SYSTEM_PROMPT},
+        {"role": "user", "content": f"Question:\n{question.strip()}"},
+    ]
 
 
 def result_key(row: dict, model_name: str | None = None) -> tuple[str, str]:
@@ -28,7 +43,7 @@ def result_key(row: dict, model_name: str | None = None) -> tuple[str, str]:
 
 def configure_logger(log_path: Path) -> logging.Logger:
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    logger = logging.getLogger("generate_llm_only")
+    logger = logging.getLogger("generate_llm_only_forced")
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
     handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
@@ -90,7 +105,7 @@ def main() -> None:
         qa
         for qa in qa_rows
         if result_key(
-            {"experiment_id": f"{qa.get('id')}::llm_only"},
+            {"experiment_id": f"{qa.get('id')}::llm_only_forced"},
             backend.model_name,
         )
         not in completed
@@ -102,7 +117,7 @@ def main() -> None:
         f"log={log_path}"
     )
     logger.info(
-        "llm-only generation started | model=%s | selected=%d | pending=%d",
+        "forced-answer generation started | model=%s | selected=%d | pending=%d",
         backend.model_name,
         len(qa_rows),
         len(pending),
@@ -114,7 +129,7 @@ def main() -> None:
     progress = tqdm(
         pending,
         total=len(pending),
-        desc="Generating LLM-only",
+        desc="Generating forced LLM-only",
         unit="answer",
         dynamic_ncols=True,
         smoothing=0.1,
@@ -122,12 +137,13 @@ def main() -> None:
 
     for index, qa in enumerate(progress, 1):
         qa_id = str(qa.get("id") or "")
-        experiment_id = f"{qa_id}::llm_only"
+        experiment_id = f"{qa_id}::llm_only_forced"
         record = {
             "experiment_id": experiment_id,
             "qa_id": qa_id,
             "qa_type": qa.get("type") or qa.get("qa_type"),
             "strategy": "llm_only",
+            "baseline_mode": "forced_answer",
             "question": qa.get("question"),
             "source_section": qa.get("source_section"),
             "context_token_budget": 0,
@@ -140,7 +156,7 @@ def main() -> None:
         started = time.perf_counter()
         try:
             record["answer"] = backend.generate(
-                build_llm_only_messages(str(qa.get("question") or ""))
+                build_forced_answer_messages(str(qa.get("question") or ""))
             )
             record["generation_error"] = None
             success_count += 1
@@ -192,7 +208,7 @@ def main() -> None:
     write_jsonl(out_path, list(output_by_key.values()))
     print()
     print(f"완료: {success_count}건 성공, {failure_count}건 실패")
-    print(f"llm-only answers -> {out_path}")
+    print(f"forced LLM-only answers -> {out_path}")
     print(f"log -> {log_path}")
 
 
