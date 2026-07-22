@@ -235,8 +235,7 @@ def main() -> None:
             rows = list(output_by_key.values())
             write_jsonl(out_path, rows)
             write_detail_csv(detail_csv_path, rows)
-            graded = [row for row in rows if row.get("judge_verdict") in {"O", "X"}]
-            summary = summarize_judgements(graded)
+            summary = summarize_judgements(rows)
             write_json(summary_path, summary)
             write_summary_csv(summary_csv_path, summary)
 
@@ -246,8 +245,7 @@ def main() -> None:
     rows = list(output_by_key.values())
     write_jsonl(out_path, rows)
     write_detail_csv(detail_csv_path, rows)
-    graded = [row for row in rows if row.get("judge_verdict") in {"O", "X"}]
-    summary = summarize_judgements(graded)
+    summary = summarize_judgements(rows)
     write_json(summary_path, summary)
     write_summary_csv(summary_csv_path, summary)
 
